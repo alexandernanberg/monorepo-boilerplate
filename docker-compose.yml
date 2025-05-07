@@ -1,0 +1,23 @@
+services:
+  db:
+    image: postgres:17-alpine
+    restart: always
+    environment:
+      POSTGRES_DB: workout
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - 5432:5432
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    ports:
+      - 6379:6379
+
+  mailpit:
+    image: axllent/mailpit
+    restart: unless-stopped
+    ports:
+      - 1025:1025
+      - 8025:8025

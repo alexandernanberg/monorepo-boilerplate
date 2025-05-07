@@ -1,0 +1,20 @@
+services:
+  db_test:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: workout
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - 5433:5432
+
+  redis_test:
+    image: redis:7-alpine
+    ports:
+      - 6380:6379
+
+  mailpit_test:
+    image: axllent/mailpit
+    ports:
+      - 1026:1025
+      - 8026:8025

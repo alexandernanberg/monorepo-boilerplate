@@ -1,0 +1,11 @@
+{
+  "private": true,
+  "scripts": {},
+  "type": "module",
+  "packageManager": "pnpm@10.6.5",
+  "devDependencies": {
+    "prettier": "catalog:",
+    "turbo": "^2.4.4",
+    "typescript": "catalog:"
+  }
+}
