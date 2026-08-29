@@ -25,16 +25,14 @@ async function waitFor(label: string, cb: () => Promise<unknown>) {
   // Postgres initdb can take a while after `up -d` returns.
   const maxRetries = 60
   const delay = 500
-  let lastError: unknown
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       await cb()
       return
     } catch (error) {
-      lastError = error
       if (attempt === maxRetries) {
         throw new Error(`${label} is not ready after ${maxRetries} attempts.`, {
-          cause: lastError,
+          cause: error,
         })
       }
       await new Promise((res) => {
