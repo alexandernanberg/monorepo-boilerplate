@@ -1,30 +1,29 @@
+# syntax=docker/dockerfile:1
+# Build from the monorepo root:
+#   docker build -f apps/api/Dockerfile .
 ###########################################################
-# Base
+# Base — Bun + native pnpm 12 (no Node)
 ###########################################################
-FROM oven/bun:1 AS base
+FROM oven/bun:1.4 AS base
 
-ENV PNPM_HOME="/pnpm"
-ENV DO_NOT_TRACK=1
-# `pnpm install --prod` over the full tree wants to remove node_modules, and
-# prompts for it; a docker RUN has no TTY to answer with.
-ENV CI=true
-
+USER root
 WORKDIR /app
 
-# The bun image ships no package manager, so install the pinned pnpm. It runs
-# on bun's `node` shim, and turbo shells out to it to run package scripts.
-COPY package.json .
-RUN bun install -g "$(bun -e "console.log(require('./package.json').packageManager)")"
+ENV CI=true
+ENV DO_NOT_TRACK=1
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
+
+COPY --from=ghcr.io/pnpm/pnpm:12.0.0 /opt/pnpm/pnpm /usr/local/bin/pnpm
 
 ###########################################################
 # Sourcer
 ###########################################################
 FROM base AS sourcer
 
-RUN bun install -g "turbo@$(bun -e "console.log(require('./package.json').devDependencies.turbo)")"
-
 COPY . .
-RUN turbo prune api --docker
+RUN TURBO_VERSION="$(bun -e 'console.log(require("./package.json").devDependencies.turbo.replace(/^[^\d]+/, ""))')" \
+  && pnpm dlx "turbo@${TURBO_VERSION}" prune api --docker
 
 ###########################################################
 # Deps
@@ -38,44 +37,29 @@ RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
   pnpm install --frozen-lockfile
 
 ###########################################################
-# Prod deps
-###########################################################
-FROM base AS prod-deps
-
-COPY --from=sourcer /app/out/json/ .
-COPY --from=sourcer /app/out/pnpm-lock.yaml ./pnpm-lock.yaml
-COPY --from=deps /app/ .
-
-RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
-  pnpm install --prod --frozen-lockfile
-
-###########################################################
 # Builder
 ###########################################################
-FROM base AS builder
+FROM deps AS builder
 
-COPY --from=deps /app/ .
 COPY --from=sourcer /app/out/full/ .
+RUN pnpm exec turbo run build --filter=api...
 
-RUN turbo run build --filter=api...
-
-##########################################################
-# Runtime
-##########################################################
-FROM oven/bun:1 AS runtime
+###########################################################
+# Runtime — bun bundle only, no node_modules / pnpm / source
+###########################################################
+FROM oven/bun:1.4-slim AS runtime
 
 ENV NODE_ENV=production
 
-RUN addgroup --system --gid 1001 apiuser && \
-  adduser --system --uid 1001 apiuser
-
-USER apiuser
-
 WORKDIR /app
 
-COPY --from=prod-deps /app/ .
-COPY --from=builder /app/apps/api/dist ./apps/api/dist
+COPY --from=builder --chown=bun:bun /app/apps/api/dist ./
 
-WORKDIR /app/apps/api
+USER bun
 
-CMD ["bun", "start"]
+EXPOSE 4000
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD ["bun", "-e", "const r = await fetch('http://127.0.0.1:' + (process.env.PORT || 4000) + '/'); if (!r.ok) process.exit(1)"]
+
+CMD ["bun", "run", "server.js"]
