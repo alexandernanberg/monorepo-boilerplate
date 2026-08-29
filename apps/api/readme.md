@@ -34,8 +34,16 @@ Errors are recorded centrally, so handlers only need to throw:
 - `app.onError` logs 5xx with `log.error` and 4xx with `log.warn`. It logs the
   _original_ error rather than the `ServerError` it maps to, because
   `ServerError.from` collapses anything unrecognized into a generic 500.
-- Yoga's `maskError` does the same for GraphQL, which otherwise swallows
-  resolver errors into the response with no trace on the server.
+- Yoga's `maskError` does the same for GraphQL. Yoga's own logger is turned off
+  (`logging: false`) — it dumped errors to the console unstructured and detached
+  from the request that caused them.
+- Parse and validation failures are the client's mistake, not ours. They are
+  returned to the client as-is and recorded as warnings. Validation errors never
+  reach `maskError`, so a small `onValidate` plugin catches those.
+
+Note that GraphQL answers with `200` and an `errors` array, so the wide event's
+`status` says nothing about whether a GraphQL request succeeded — its `level`
+and `error` do.
 
 Output is a pretty tree in development and one JSON line per request in
 production. Tests run with `silent: true` so events are still built (and any

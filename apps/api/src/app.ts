@@ -1,5 +1,6 @@
 import { evlog } from 'evlog/hono'
 import { GraphQLError } from 'graphql'
+import type { Plugin } from 'graphql-yoga'
 import { createYoga } from 'graphql-yoga'
 import { Hono } from 'hono'
 import { csrf } from 'hono/csrf'
@@ -33,28 +34,80 @@ app.notFound(() => new NotFoundError().toResponse())
 
 app.route('/auth', authRouter)
 
+/**
+ * Validation failures never reach `maskError`, so without this a client sending
+ * malformed queries is indistinguishable from a healthy one: the response
+ * carries the errors but the request logs a clean 200.
+ */
+const logValidationErrors: Plugin = {
+  onValidate: () => (payload) => {
+    if (payload.valid) return
+
+    const errors: ReadonlyArray<unknown> = payload.result
+    const log = useLogger()
+
+    log.setLevel('warn')
+    log.set({
+      error: {
+        code: 'GRAPHQL_VALIDATION_FAILED',
+        message: errors
+          .map((validationError) =>
+            validationError instanceof Error
+              ? validationError.message
+              : 'Unknown validation error',
+          )
+          .join('; '),
+      },
+    })
+  },
+}
+
 const yoga = createYoga({
   schema,
   landingPage: false,
+  // Yoga's own logger dumps errors straight to the console, unstructured and
+  // detached from the request that caused them. `maskError` below puts them on
+  // the request's wide event instead.
+  logging: false,
+  plugins: [logValidationErrors],
   maskedErrors: {
     maskError: (error) => {
+      const log = useLogger()
+
+      // Parse failures arrive as a `GraphQLError` with no `originalError`. They
+      // describe the client's own query, expose nothing internal, and are what
+      // the client needs in order to fix the request. Masking them to a generic
+      // 500 makes a client mistake look like ours — and logs it as one.
+      if (error instanceof GraphQLError && !error.originalError) {
+        const code = error.extensions['code']
+
+        log.setLevel('warn')
+        log.set({
+          error: {
+            code: typeof code === 'string' ? code : 'GRAPHQL_ERROR',
+            message: error.message,
+          },
+        })
+
+        return error
+      }
+
       const originalError =
         error instanceof GraphQLError ? error.originalError : error
       const serverError = ServerError.from(originalError)
 
-      // Yoga swallows resolver errors into the GraphQL response, so without
-      // this an exploding resolver leaves no trace anywhere.
-      logFailedRequest(useLogger(), serverError, originalError ?? error)
+      logFailedRequest(log, serverError, originalError ?? error)
 
       return serverError.toGraphQLError()
     },
   },
   context: async ({ request, params }) => {
     // Every GraphQL request shares the `/graphql` path, so the operation name
-    // is what makes the wide events tellable apart.
-    useLogger().set({
-      graphql: { operationName: params.operationName ?? null },
-    })
+    // is what makes the wide events tellable apart. Only sent by clients that
+    // name their operations.
+    if (params.operationName) {
+      useLogger().set({ graphql: { operationName: params.operationName } })
+    }
 
     const currentUser = await getCurrentUser(request)
     const dataSources = createDataSources(currentUser)

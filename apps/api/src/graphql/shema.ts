@@ -28,8 +28,6 @@ export const User = builder.node(UserRef, {
   }),
 })
 
-builder.mutationType({ fields: () => ({}) })
-
 ///////////////////////////////////////////////////////////
 // Query
 ///////////////////////////////////////////////////////////
@@ -42,5 +40,14 @@ builder.queryType({
     }),
   }),
 })
+
+///////////////////////////////////////////////////////////
+// Mutation
+///////////////////////////////////////////////////////////
+
+// There is no mutation type yet. GraphQL rejects a schema containing an object
+// type with no fields, so declaring an empty one up front makes every request —
+// queries included — fail schema validation. Add the first mutation with
+// `builder.mutationType({ fields: (t) => ({ ... }) })`.
 
 export const schema = builder.toSchema()
