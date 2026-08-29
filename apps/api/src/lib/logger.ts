@@ -1,3 +1,4 @@
+import type { AuditableLogger } from 'evlog'
 import { initLogger } from 'evlog'
 import type { EvlogVariables } from 'evlog/hono'
 import { useLogger } from 'evlog/hono'
@@ -29,5 +30,8 @@ initLogger({
   redact: env === 'production',
 })
 
-export type { EvlogVariables }
+/** The per-request logger, as returned by `ctx.get('log')` and `useLogger()`. */
+type Logger = AuditableLogger
+
+export type { EvlogVariables, Logger }
 export { useLogger }

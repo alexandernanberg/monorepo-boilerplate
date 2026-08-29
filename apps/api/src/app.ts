@@ -6,7 +6,7 @@ import { csrf } from 'hono/csrf'
 import { secureHeaders } from 'hono/secure-headers'
 import { createDataSources } from '~/graphql/data-loaders'
 import { schema } from '~/graphql/shema'
-import type { EvlogVariables } from '~/lib/logger'
+import type { EvlogVariables, Logger } from '~/lib/logger'
 import { useLogger } from '~/lib/logger'
 import { NotFoundError, ServerError } from '~/lib/server-error'
 import { authRouter } from '~/routes/auth'
@@ -23,18 +23,7 @@ app.use(secureHeaders())
 
 app.onError((error, ctx) => {
   const serverError = ServerError.from(error)
-  const log = ctx.get('log')
-
-  if (serverError.statusCode >= 500) {
-    // Log `error`, not `serverError`. `ServerError.from` collapses anything it
-    // does not recognize into a generic 500, so logging the mapped error throws
-    // away the message and stack of whatever actually broke.
-    log.error(error, { error: { code: serverError.code } })
-  } else {
-    // Expected outcomes (invalid code, rate limited, unauthorized). Recorded on
-    // the wide event so they are queryable, but not as errors.
-    log.warn(serverError.message, { error: { code: serverError.code } })
-  }
+  logFailedRequest(ctx.get('log'), serverError, error)
 
   return serverError.toResponse()
 })
@@ -52,20 +41,10 @@ const yoga = createYoga({
       const originalError =
         error instanceof GraphQLError ? error.originalError : error
       const serverError = ServerError.from(originalError)
-      const log = useLogger()
 
       // Yoga swallows resolver errors into the GraphQL response, so without
       // this an exploding resolver leaves no trace anywhere.
-      if (serverError.statusCode >= 500) {
-        log.error(
-          originalError instanceof Error
-            ? originalError
-            : new Error(String(originalError ?? error)),
-          { error: { code: serverError.code } },
-        )
-      } else {
-        log.warn(serverError.message, { error: { code: serverError.code } })
-      }
+      logFailedRequest(useLogger(), serverError, originalError ?? error)
 
       return serverError.toGraphQLError()
     },
@@ -90,5 +69,34 @@ const yoga = createYoga({
 })
 
 app.use('/graphql', async (ctx) => yoga.handle(ctx.req.raw))
+
+/**
+ * Record a failed request on its wide event.
+ *
+ * 5xx logs `error` rather than `serverError`, because `ServerError.from`
+ * collapses anything it does not recognize into a generic 500 — logging the
+ * mapped error throws away the message and stack of whatever actually broke.
+ *
+ * 4xx is an expected outcome (invalid code, rate limited, unauthorized), so the
+ * event is marked as a warning carrying just the code and message. There is no
+ * stack worth keeping, and a client mistake should not read as a server failure.
+ */
+function logFailedRequest(
+  log: Logger,
+  serverError: ServerError,
+  error: unknown,
+) {
+  if (serverError.statusCode < 500) {
+    log.setLevel('warn')
+    log.set({
+      error: { code: serverError.code, message: serverError.message },
+    })
+    return
+  }
+
+  log.error(error instanceof Error ? error : new Error(String(error)), {
+    error: { code: serverError.code },
+  })
+}
 
 export { app }
