@@ -1,10 +1,11 @@
 # syntax=docker/dockerfile:1
 # Build from the monorepo root:
-#   docker build -f apps/api/Dockerfile .
+#   docker build -f apps/api/Dockerfile --build-arg BUN_VERSION=$(cat .bun-version) .
 ###########################################################
 # Base — Bun + native pnpm 12 (no Node)
 ###########################################################
-FROM oven/bun:1.4 AS base
+ARG BUN_VERSION=1.4.0
+FROM oven/bun:${BUN_VERSION} AS base
 
 USER root
 WORKDIR /app
@@ -22,6 +23,8 @@ COPY --from=ghcr.io/pnpm/pnpm:12.0.0 /opt/pnpm/pnpm /usr/local/bin/pnpm
 FROM base AS sourcer
 
 COPY . .
+# FROM can't read files, so ARG BUN_VERSION must match .bun-version.
+RUN test "$(bun --version)" = "$(tr -d '[:space:]' < .bun-version)"
 RUN TURBO_VERSION="$(bun -e 'console.log(require("./package.json").devDependencies.turbo.replace(/^[^\d]+/, ""))')" \
   && pnpm dlx "turbo@${TURBO_VERSION}" prune api --docker
 
@@ -47,7 +50,7 @@ RUN pnpm exec turbo run build --filter=api...
 ###########################################################
 # Runtime — bun bundle only, no node_modules / pnpm / source
 ###########################################################
-FROM oven/bun:1.4-slim AS runtime
+FROM oven/bun:${BUN_VERSION}-slim AS runtime
 
 ENV NODE_ENV=production
 
