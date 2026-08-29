@@ -1,4 +1,4 @@
-app = "api-dry-snowflake-3966 "
+app = "api-dry-snowflake-3966"
 
 [build]
   dockerfile = "Dockerfile" 
@@ -7,7 +7,7 @@ app = "api-dry-snowflake-3966 "
   NODE_ENV = "production"
 
 [[services]]
-  internal_port = 3000
+  internal_port = 4000
   protocol = "tcp"
 
   [[services.ports]]

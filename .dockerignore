@@ -1,3 +1,10 @@
+.git
+**/.DS_Store
 **/node_modules
+**/.turbo
 **/dist
 **/out
+**/.env*
+**/.vscode
+docker-compose*.yml
+*.md
