@@ -1,6 +1,83 @@
 import { expect, test } from 'bun:test'
+import { runShutdownTasks } from '~/lib/shutdown'
 
-const port = 18765
+test('closes tasks in registration order', async () => {
+  const order: Array<string> = []
+
+  const exitCode = await runShutdownTasks(
+    [
+      {
+        name: 'a',
+        close: () => {
+          order.push('a')
+        },
+      },
+      {
+        name: 'b',
+        close: () => {
+          order.push('b')
+        },
+      },
+    ],
+    1000,
+  )
+
+  expect(exitCode).toBe(0)
+  expect(order).toEqual(['a', 'b'])
+})
+
+test('keeps going if a task throws', async () => {
+  const order: Array<string> = []
+
+  const exitCode = await runShutdownTasks(
+    [
+      {
+        name: 'a',
+        close: () => {
+          throw new Error('nope')
+        },
+      },
+      {
+        name: 'b',
+        close: () => {
+          order.push('b')
+        },
+      },
+    ],
+    1000,
+  )
+
+  expect(exitCode).toBe(1)
+  expect(order).toEqual(['b'])
+})
+
+test('times out a hung task and still runs the rest', async () => {
+  const order: Array<string> = []
+
+  const exitCode = await runShutdownTasks(
+    [
+      {
+        name: 'a',
+        close: () =>
+          new Promise(() => {
+            /* never settles */
+          }),
+      },
+      {
+        name: 'b',
+        close: () => {
+          order.push('b')
+        },
+      },
+    ],
+    200,
+  )
+
+  expect(exitCode).toBe(1)
+  expect(order).toEqual(['b'])
+})
+
+const port = 10_000 + Math.floor(Math.random() * 20_000)
 const SERVER_URL = `http://127.0.0.1:${port}/`
 
 /**

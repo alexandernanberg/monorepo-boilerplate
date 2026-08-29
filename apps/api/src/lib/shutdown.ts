@@ -48,30 +48,37 @@ function listenForShutdownSignals() {
 async function shutdown(signal: string) {
   log.info('shutdown', `Received ${signal}, closing down`)
 
-  // Supervisors send `SIGKILL` if the process outstays its grace period, so
-  // exit on our own terms first — a connection that never closes should not
-  // cost the tasks behind it their chance to run. Keep this below the
-  // platform's own timeout (`kill_timeout` on Fly,
-  // `terminationGracePeriodSeconds` on Kubernetes).
-  const timeout = setTimeout(() => {
-    log.error(
-      'shutdown',
-      `Still closing after ${config.SHUTDOWN_TIMEOUT_SECONDS}s, exiting now`,
-    )
-    process.exit(1)
-  }, config.SHUTDOWN_TIMEOUT_SECONDS * 1000)
+  const exitCode = await runShutdownTasks(
+    tasks,
+    config.SHUTDOWN_TIMEOUT_SECONDS * 1000,
+  )
 
+  log.info('shutdown', 'Closed down')
+  process.exit(exitCode)
+}
+
+/**
+ * Close each task in order. A hung or throwing close is skipped so the ones
+ * behind it still run — each call is raced against the time left on the clock.
+ */
+async function runShutdownTasks(
+  queued: readonly ShutdownTask[],
+  timeoutMs: number,
+) {
+  const deadline = Date.now() + timeoutMs
   let exitCode = 0
 
-  for (const task of tasks) {
+  for (const task of queued) {
     try {
-      // Sequential on purpose: registration order is teardown order, and a
-      // task may still be in use by the one before it.
+      // Sequential on purpose: registration order is teardown order.
       // oxlint-disable-next-line no-await-in-loop
-      await task.close()
+      await Promise.race([
+        Promise.resolve(task.close()),
+        Bun.sleep(Math.max(deadline - Date.now(), 0)).then(() => {
+          throw new Error('timed out')
+        }),
+      ])
     } catch (error) {
-      // One resource refusing to close is not a reason to leak the rest, so
-      // record it and keep going.
       exitCode = 1
       log.error(
         'shutdown',
@@ -80,11 +87,7 @@ async function shutdown(signal: string) {
     }
   }
 
-  clearTimeout(timeout)
-
-  log.info('shutdown', 'Closed down')
-
-  process.exit(exitCode)
+  return exitCode
 }
 
-export { listenForShutdownSignals, onShutdown }
+export { listenForShutdownSignals, onShutdown, runShutdownTasks }

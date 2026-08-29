@@ -71,8 +71,9 @@ resolves once the requests already in flight have answered — so everything
 registered after it is still open while they finish. Register anything new the
 same way: outside-in, so a draining request never loses something it is using.
 
-The whole sequence has `SHUTDOWN_TIMEOUT_SECONDS` to finish, after which the
-process exits `1` rather than waiting to be `SIGKILL`ed. Keep that budget below
+The whole sequence has `SHUTDOWN_TIMEOUT_SECONDS`. A hung close is raced
+against whatever time is left so the tasks behind it still run, then the
+process exits rather than waiting to be `SIGKILL`ed. Keep that budget below
 the platform's own grace period — `kill_timeout` in `fly.toml`,
 `terminationGracePeriodSeconds` on Kubernetes. A second signal exits
 immediately, which is what a second Ctrl-C expects.
