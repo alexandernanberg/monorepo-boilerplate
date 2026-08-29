@@ -22,7 +22,10 @@ afterAll(async () => {
 })
 
 async function waitFor(cb: () => Promise<unknown>) {
-  const maxRetries = 10
+  // Generous, because a cold CI runner has to pull the images and let Postgres
+  // run initdb before it accepts connections. Locally the containers are
+  // usually up within a retry or two.
+  const maxRetries = 60
   const delay = 500
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {

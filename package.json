@@ -2,9 +2,11 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "build": "turbo run build",
     "lint": "turbo run lint",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
+    "test": "turbo run test",
     "typecheck": "turbo run typecheck"
   },
   "devDependencies": {
