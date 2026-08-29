@@ -42,7 +42,7 @@ async function createSession(
 
 // TODO: when user verifies email or other significant actions, invalidate all
 // active sessions and create a new session.
-async function revokeAllActiveUserSesssions(userId: string) {
+async function revokeAllActiveUserSessions(userId: string) {
   await db
     .update(sessionsTable)
     .set({ revokedAt: sql`now()` })
@@ -141,6 +141,6 @@ export {
   createSessionTokenHash,
   getSession,
   getSessionTokenFromRequest,
-  revokeAllActiveUserSesssions,
+  revokeAllActiveUserSessions,
   revokeSession,
 }

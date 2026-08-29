@@ -49,7 +49,6 @@
     "oxlint": "catalog:",
     "oxlint-config-alexandernanberg": "catalog:",
     "oxlint-tsgolint": "catalog:",
-    "tsx": "catalog:",
     "typescript": "catalog:"
   }
 }

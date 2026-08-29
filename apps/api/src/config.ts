@@ -6,7 +6,7 @@ export const env = z
   .parse(process.env.NODE_ENV)
 
 class Config {
-  DATABASE_URL = 'postgres://postgres:postgres@0.0.0.0:5432/workout'
+  DATABASE_URL = 'postgres://postgres:postgres@localhost:5432/workout'
 
   EMAIL_SENDER = 'noreply@acme.inc'
 
@@ -43,7 +43,7 @@ class ProductionConfig extends Config {
 }
 
 class TestConfig extends Config {
-  DATABASE_URL = 'postgres://postgres:postgres@0.0.0.0:5433/workout'
+  DATABASE_URL = 'postgres://postgres:postgres@localhost:5433/workout'
 
   SMTP_PORT = 1026
 
