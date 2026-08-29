@@ -1,5 +1,11 @@
 app = "api-dry-snowflake-3966"
 
+# The app installs its own SIGTERM handler and gives itself
+# `SHUTDOWN_TIMEOUT_SECONDS` (10s) to drain. Fly's default is SIGINT with a 5s
+# kill_timeout, which would SIGKILL the machine mid-drain.
+kill_signal = "SIGTERM"
+kill_timeout = "15s"
+
 [build]
   dockerfile = "Dockerfile" 
 

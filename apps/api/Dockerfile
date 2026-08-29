@@ -62,4 +62,7 @@ EXPOSE 4000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD ["bun", "-e", "const r = await fetch('http://127.0.0.1:' + (process.env.PORT || 4000) + '/'); if (!r.ok) process.exit(1)"]
 
-CMD ["bun", "run", "server.js"]
+# Exec the server as PID 1 so SIGTERM reaches the process holding the
+# connections. `bun run` / `bun start` insert a script runner that would
+# swallow the signal (and as PID 1, ignore it).
+CMD ["bun", "server.js"]
