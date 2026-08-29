@@ -12,6 +12,7 @@ import {
   usersTable,
 } from '~/db/schema'
 import { emailClient } from '~/lib/email'
+import type { EvlogVariables } from '~/lib/logger'
 import { BucketRateLimiter, ThrottlingRateLimiter } from '~/lib/rate-limiter'
 import { BadRequestError, ServerError } from '~/lib/server-error'
 import { getRequestIp, safeJSONParse } from '~/lib/utils'
@@ -24,7 +25,7 @@ import {
   revokeSession,
 } from '~/services/session'
 
-export const authRouter = new Hono()
+export const authRouter = new Hono<EvlogVariables>()
 
 ///////////////////////////////////////////////////////////
 // POST /auth/signup
@@ -47,6 +48,9 @@ authRouter.post('/signup', async (ctx) => {
 
   const body = safeJSONParse(await ctx.req.text()) ?? {}
   const { email } = z.object({ email: z.email().toLowerCase() }).parse(body)
+
+  const log = ctx.get('log')
+  log.set({ auth: { step: 'signup', email } })
 
   const existingUser = await db.query.usersTable.findFirst({
     where: eq(usersTable.email, email),
@@ -99,6 +103,8 @@ authRouter.post('/signup', async (ctx) => {
     text: `Your signup code is: ${code}. The code is valid for 15 minutes.`,
   })
 
+  log.set({ auth: { challengeSent: true } })
+
   return ctx.body(null, { status: 204 })
 })
 
@@ -140,6 +146,9 @@ authRouter.post('/signup/verify', async (ctx) => {
     .object({ email: z.email().toLowerCase(), code: z.string() })
     .parse(body)
 
+  const log = ctx.get('log')
+  log.set({ auth: { step: 'signup/verify', email } })
+
   await signupVerifyRateLimiterEmail.consume(email)
 
   await db.transaction(async (tx) => {
@@ -164,7 +173,7 @@ authRouter.post('/signup/verify', async (ctx) => {
     }
 
     if (!(await verify(signupChallenge.codeHash, code))) {
-      await tx
+      const updated = await tx
         .update(signupChallengesTable)
         .set({
           failedAttempts: sql`${signupChallengesTable.failedAttempts} + 1`,
@@ -172,6 +181,8 @@ authRouter.post('/signup/verify', async (ctx) => {
         .where(eq(signupChallengesTable.id, signupChallenge.id))
         .returning()
         .then((res) => res[0]!)
+
+      log.set({ auth: { failedAttempts: updated.failedAttempts } })
 
       await tx.execute(sql`commit`)
 
@@ -196,6 +207,11 @@ authRouter.post('/signup/verify', async (ctx) => {
   })
 
   await signupVerifyRateLimiterEmail.reset(email)
+
+  log.set({
+    user: { id: session.userId },
+    session: { id: session.id },
+  })
 
   return ctx.json({
     token,
@@ -229,6 +245,9 @@ authRouter.post('/email', async (ctx) => {
   const body = safeJSONParse(await ctx.req.text()) ?? {}
   const { email } = z.object({ email: z.email().toLowerCase() }).parse(body)
 
+  const log = ctx.get('log')
+  log.set({ auth: { step: 'email', email } })
+
   await emailLoginRateLimiterEmail.consume(email)
 
   const user = await db.query.usersTable.findFirst({
@@ -238,6 +257,8 @@ authRouter.post('/email', async (ctx) => {
   if (!user) {
     throw new ServerError(404, 'NO_ACCOUNT', 'Email not recognized')
   }
+
+  log.set({ user: { id: user.id } })
 
   const code = generateCode()
   const codeHash = await hash(code)
@@ -270,6 +291,8 @@ authRouter.post('/email', async (ctx) => {
     text: `Your login code is: ${code}. The code is valid for 15 minutes.`,
   })
 
+  log.set({ auth: { challengeSent: true } })
+
   return ctx.body(null, { status: 204 })
 })
 
@@ -301,6 +324,9 @@ authRouter.post('/email/verify', async (ctx) => {
     .object({ email: z.email().toLowerCase(), code: z.string() })
     .parse(body)
 
+  const log = ctx.get('log')
+  log.set({ auth: { step: 'email/verify', email } })
+
   await emailVerifyRateLimiterEmail.consume(email)
 
   const user = await db.query.usersTable.findFirst({
@@ -310,6 +336,8 @@ authRouter.post('/email/verify', async (ctx) => {
   if (!user) {
     throw new ServerError(404, 'NO_ACCOUNT', 'Email not recognized')
   }
+
+  log.set({ user: { id: user.id } })
 
   await db.transaction(async (tx) => {
     const loginChallenge = await tx.query.loginChallengesTable.findFirst({
@@ -335,7 +363,7 @@ authRouter.post('/email/verify', async (ctx) => {
     }
 
     if (!(await verify(loginChallenge.codeHash, code))) {
-      await tx
+      const updated = await tx
         .update(loginChallengesTable)
         .set({
           failedAttempts: sql`${loginChallengesTable.failedAttempts} + 1`,
@@ -343,6 +371,8 @@ authRouter.post('/email/verify', async (ctx) => {
         .where(eq(loginChallengesTable.id, loginChallenge.id))
         .returning()
         .then((res) => res[0]!)
+
+      log.set({ auth: { failedAttempts: updated.failedAttempts } })
 
       await tx.execute(sql`commit`)
 
@@ -360,6 +390,8 @@ authRouter.post('/email/verify', async (ctx) => {
 
   await emailVerifyRateLimiterEmail.reset(email)
 
+  log.set({ session: { id: session.id } })
+
   return ctx.json({
     token,
     session: createSessionDto(session),
@@ -374,6 +406,12 @@ authRouter.post('/logout', async (ctx) => {
   const session = await getSession(getSessionTokenFromRequest(ctx.req.raw))
   await revokeSession(session.id)
 
+  ctx.get('log').set({
+    auth: { step: 'logout' },
+    user: { id: session.userId },
+    session: { id: session.id },
+  })
+
   return ctx.body(null, { status: 204 })
 })
 
@@ -383,5 +421,11 @@ authRouter.post('/logout', async (ctx) => {
 
 authRouter.get('/session', async (ctx) => {
   const session = await getSession(getSessionTokenFromRequest(ctx.req.raw))
+
+  ctx.get('log').set({
+    user: { id: session.userId },
+    session: { id: session.id },
+  })
+
   return ctx.json(session)
 })

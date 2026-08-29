@@ -1,3 +1,4 @@
+import { log } from 'evlog'
 import { app } from '~/app'
 
 const server = Bun.serve({
@@ -5,4 +6,4 @@ const server = Bun.serve({
   fetch: app.fetch,
 })
 
-console.log(`Server running on ${server.url}`)
+log.info('server', `Server running on ${server.url}`)
