@@ -18,6 +18,8 @@ runs:
 
     - if: inputs.bun == 'true'
       uses: oven-sh/setup-bun@v2
+      with:
+        bun-version-file: .bun-version
 
     - run: pnpm install --frozen-lockfile
       shell: bash
