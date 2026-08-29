@@ -32,6 +32,10 @@ class Config {
 
   RATE_LIMIT_IP_BUCKET_SIZE = 10
   RATE_LIMIT_IP_BUCKET_REFILL_RATE_SECONDS = 1
+
+  // How long in-flight work gets to finish after a SIGTERM. Must stay below
+  // the platform's own grace period, or it is SIGKILL that ends the process.
+  SHUTDOWN_TIMEOUT_SECONDS = 10
 }
 
 class ProductionConfig extends Config {

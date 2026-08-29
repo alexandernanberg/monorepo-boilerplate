@@ -55,6 +55,37 @@ interchangeable with `silent` — anything that skips a request also leaves
 Nothing ships logs off the box yet. evlog has drain adapters for Axiom, OTLP,
 Datadog, Better Stack and others — wire one up via `initLogger({ drain })`.
 
+## Shutdown
+
+`SIGTERM` (from Docker, Fly or Kubernetes) and `SIGINT` (Ctrl-C) start a
+graceful shutdown, wired up in `src/server.ts`:
+
+```ts
+onShutdown('http server', () => server.stop())
+onShutdown('database pool', () => client.end())
+```
+
+Registration order is teardown order, and tasks run one at a time. The HTTP
+server goes first — Bun's `server.stop()` stops accepting connections and
+resolves once the requests already in flight have answered — so everything
+registered after it is still open while they finish. Register anything new the
+same way: outside-in, so a draining request never loses something it is using.
+
+The whole sequence has `SHUTDOWN_TIMEOUT_SECONDS`. A hung close is raced
+against whatever time is left so the tasks behind it still run, then the
+process exits rather than waiting to be `SIGKILL`ed. Keep that budget below
+the platform's own grace period — `kill_timeout` in `fly.toml`,
+`terminationGracePeriodSeconds` on Kubernetes. A second signal exits
+immediately, which is what a second Ctrl-C expects.
+
+The container's `CMD` execs `bun server.js` directly instead of going through
+`bun run` or `bun start`. A script runner in between is another process that
+has to forward the signal, and as PID 1 it would ignore `SIGTERM` outright.
+
+Note that this is where a log drain gets flushed once one is configured —
+`onShutdown('logs', () => drain.flush())` — otherwise the last events in the
+buffer die with the process.
+
 ## Linting
 
 Linting and formatting run on [oxlint and oxfmt](https://oxc.rs) via

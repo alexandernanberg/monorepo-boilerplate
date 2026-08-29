@@ -1,29 +1,29 @@
+# syntax=docker/dockerfile:1
+# Build from the monorepo root:
+#   docker build -f apps/api/Dockerfile .
 ###########################################################
-# Base
+# Base — Bun + native pnpm 12 (no Node)
 ###########################################################
-FROM node:24-alpine AS base
+FROM oven/bun:1.4 AS base
 
-RUN apk update && apk add --no-cache libc6-compat jq curl bash
-
-ENV PNPM_HOME="/pnpm"
-ENV PATH="$PNPM_HOME:$PATH"
-ENV DO_NOT_TRACK=1
-
+USER root
 WORKDIR /app
 
-RUN corepack enable
+ENV CI=true
+ENV DO_NOT_TRACK=1
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
+
+COPY --from=ghcr.io/pnpm/pnpm:12.0.0 /opt/pnpm/pnpm /usr/local/bin/pnpm
 
 ###########################################################
 # Sourcer
 ###########################################################
 FROM base AS sourcer
 
-COPY package.json .
-RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
-  pnpm install -g turbo@$(jq -r '.devDependencies.turbo' package.json)
-
 COPY . .
-RUN turbo prune --scope=api --docker
+RUN TURBO_VERSION="$(bun -e 'console.log(require("./package.json").devDependencies.turbo.replace(/^[^\d]+/, ""))')" \
+  && pnpm dlx "turbo@${TURBO_VERSION}" prune api --docker
 
 ###########################################################
 # Deps
@@ -37,47 +37,32 @@ RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
   pnpm install --frozen-lockfile
 
 ###########################################################
-# Prod deps
-###########################################################
-FROM base AS prod-deps
-
-COPY --from=sourcer /app/out/json/ .
-COPY --from=sourcer /app/out/pnpm-lock.yaml ./pnpm-lock.yaml
-COPY --from=deps /app/ .
-
-RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
-  pnpm install --prod --frozen-lockfile
-
-###########################################################
 # Builder
 ###########################################################
-FROM base AS builder
+FROM deps AS builder
 
-COPY --from=deps /app/ .
 COPY --from=sourcer /app/out/full/ .
+RUN pnpm exec turbo run build --filter=api...
 
-RUN curl -fsSL https://bun.sh/install | bash
-ENV BUN_INSTALL="/root/.bun"
-ENV PATH="$BUN_INSTALL/bin:$PATH"
-
-RUN bun turbo run build --filter=api...
-
-##########################################################
-# Runtime
-##########################################################
-FROM oven/bun:1 AS runtime
+###########################################################
+# Runtime — bun bundle only, no node_modules / pnpm / source
+###########################################################
+FROM oven/bun:1.4-slim AS runtime
 
 ENV NODE_ENV=production
 
-RUN addgroup --system --gid 1001 apiuser && \
-  adduser --system --uid 1001 apiuser
+WORKDIR /app
 
-USER apiuser
+COPY --from=builder --chown=bun:bun /app/apps/api/dist ./
 
-COPY --from=prod-deps /app/ .
+USER bun
 
-WORKDIR /app/apps/api
+EXPOSE 4000
 
-COPY --from=builder /app/apps/api/dist ./dist
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD ["bun", "-e", "const r = await fetch('http://127.0.0.1:' + (process.env.PORT || 4000) + '/'); if (!r.ok) process.exit(1)"]
 
-CMD ["bun", "start"]
+# Exec the server as PID 1 so SIGTERM reaches the process holding the
+# connections. `bun run` / `bun start` insert a script runner that would
+# swallow the signal (and as PID 1, ignore it).
+CMD ["bun", "server.js"]

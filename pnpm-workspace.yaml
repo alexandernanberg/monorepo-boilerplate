@@ -2,6 +2,9 @@ packages:
   - 'apps/*'
   - 'packages/*'
 
+allowBuilds:
+  esbuild: true
+
 catalog:
   oxfmt: ^0.65.0
   oxlint: ^1.80.0
@@ -9,3 +12,13 @@ catalog:
   oxlint-tsgolint: ^7.0.2001
   tsx: ^4.23.12
   typescript: ^7.0.2
+
+# pnpm 11+ default is 1440 (24h). Keep it explicit so a lockfile cannot
+# silently pull a package published minutes ago.
+minimumReleaseAge: 1440
+minimumReleaseAgeExclude:
+  # Own config — published and consumed in the same repo immediately.
+  - oxlint-config-alexandernanberg
+  # Already pinned in the lockfile from this upgrade; prune once replaced.
+  - zod@4.5.2
+minimumReleaseAgeExcludePrune: true
