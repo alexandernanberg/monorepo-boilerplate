@@ -3,7 +3,9 @@ packages:
   - 'packages/*'
 
 catalog:
-  eslint: ^9.23.0
-  prettier: ^3.5.3
-  tsx: ^4.19.3
-  typescript: ^5.8.2
+  oxfmt: ^0.65.0
+  oxlint: ^1.80.0
+  oxlint-config-alexandernanberg: ^1.2.1
+  oxlint-tsgolint: ^7.0.2001
+  tsx: ^4.23.12
+  typescript: ^7.0.2

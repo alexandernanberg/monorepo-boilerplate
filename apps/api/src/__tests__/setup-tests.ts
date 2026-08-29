@@ -32,7 +32,9 @@ async function waitFor(cb: () => Promise<unknown>) {
       if (attempt === maxRetries) {
         throw new Error('Container is not ready after multiple attempts.')
       }
-      await new Promise((res) => setTimeout(res, delay))
+      await new Promise((res) => {
+        setTimeout(res, delay)
+      })
     }
   }
 }

@@ -46,9 +46,7 @@ authRouter.post('/signup', async (ctx) => {
   }
 
   const body = safeJSONParse(await ctx.req.text()) ?? {}
-  const { email } = z
-    .object({ email: z.string().email().toLowerCase() })
-    .parse(body)
+  const { email } = z.object({ email: z.email().toLowerCase() }).parse(body)
 
   const existingUser = await db.query.usersTable.findFirst({
     where: eq(usersTable.email, email),
@@ -139,7 +137,7 @@ authRouter.post('/signup/verify', async (ctx) => {
 
   const body = safeJSONParse(await ctx.req.text()) ?? {}
   const { email, code } = z
-    .object({ email: z.string().email().toLowerCase(), code: z.string() })
+    .object({ email: z.email().toLowerCase(), code: z.string() })
     .parse(body)
 
   await signupVerifyRateLimiterEmail.consume(email)
@@ -229,9 +227,7 @@ authRouter.post('/email', async (ctx) => {
   }
 
   const body = safeJSONParse(await ctx.req.text()) ?? {}
-  const { email } = z
-    .object({ email: z.string().email().toLowerCase() })
-    .parse(body)
+  const { email } = z.object({ email: z.email().toLowerCase() }).parse(body)
 
   await emailLoginRateLimiterEmail.consume(email)
 
@@ -302,7 +298,7 @@ authRouter.post('/email/verify', async (ctx) => {
 
   const body = safeJSONParse(await ctx.req.text()) ?? {}
   const { email, code } = z
-    .object({ email: z.string().email().toLowerCase(), code: z.string() })
+    .object({ email: z.email().toLowerCase(), code: z.string() })
     .parse(body)
 
   await emailVerifyRateLimiterEmail.consume(email)

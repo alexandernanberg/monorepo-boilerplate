@@ -71,7 +71,7 @@ async function getSession(sessionToken: string | null) {
   const tokenHash = createSessionTokenHash(sessionToken)
 
   const updatedSession = await db.transaction(async (tx) => {
-    let session = await tx.query.sessionsTable.findFirst({
+    const session = await tx.query.sessionsTable.findFirst({
       where: eq(sessionsTable.tokenHash, tokenHash),
     })
 
@@ -108,8 +108,7 @@ async function getSession(sessionToken: string | null) {
         updates.lastActiveAt = sql`now()`
       }
 
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
-      session! = await tx
+      return await tx
         .update(sessionsTable)
         .set(updates)
         .where(eq(sessionsTable.id, session.id))

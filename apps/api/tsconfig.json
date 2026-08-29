@@ -22,11 +22,14 @@
     "noPropertyAccessFromIndexSignature": true,
     "noUncheckedIndexedAccess": true,
 
+    // `oxlint-config-alexandernanberg` ships plain JS with JSDoc types, so let
+    // TS read it to type `oxlint.config.ts`.
+    "maxNodeModuleJsDepth": 1,
+
     /* Types */
     "types": ["bun-types"],
 
     /* Path Aliases */
-    "baseUrl": ".",
     "paths": {
       "~/*": ["./src/*"]
     }
