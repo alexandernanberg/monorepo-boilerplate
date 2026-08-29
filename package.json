@@ -1,11 +1,19 @@
 {
   "private": true,
-  "scripts": {},
   "type": "module",
-  "packageManager": "pnpm@10.6.5",
+  "scripts": {
+    "lint": "turbo run lint",
+    "format": "oxfmt --write .",
+    "format:check": "oxfmt --check .",
+    "typecheck": "turbo run typecheck"
+  },
   "devDependencies": {
-    "prettier": "catalog:",
-    "turbo": "^2.4.4",
+    "oxfmt": "catalog:",
+    "oxlint": "catalog:",
+    "oxlint-config-alexandernanberg": "catalog:",
+    "oxlint-tsgolint": "catalog:",
+    "turbo": "^2.10.12",
     "typescript": "catalog:"
-  }
+  },
+  "packageManager": "pnpm@10.30.3"
 }

@@ -1,5 +1,5 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
-/* eslint-disable @typescript-eslint/no-unsafe-argument */
+/* oxlint-disable typescript/no-unsafe-assignment */
+/* oxlint-disable typescript/no-unsafe-argument */
 import { faker } from '@faker-js/faker'
 import { beforeEach, describe, expect, setSystemTime, test } from 'bun:test'
 import { eq } from 'drizzle-orm'
@@ -96,11 +96,13 @@ describe('POST /auth/signup', () => {
     const count = 20
 
     await Promise.all(
-      new Array(count).map(() =>
-        app.fetch(
-          TestRequest.json('/auth/signup', 'POST', { email }),
-          getRequestEnv(),
-        ),
+      Array.from(
+        { length: count },
+        async () =>
+          await app.fetch(
+            TestRequest.json('/auth/signup', 'POST', { email }),
+            getRequestEnv(),
+          ),
       ),
     )
 
