@@ -1,29 +1,30 @@
 ###########################################################
 # Base
 ###########################################################
-FROM node:24-alpine AS base
-
-RUN apk update && apk add --no-cache libc6-compat jq curl bash
+FROM oven/bun:1 AS base
 
 ENV PNPM_HOME="/pnpm"
-ENV PATH="$PNPM_HOME:$PATH"
 ENV DO_NOT_TRACK=1
+# `pnpm install --prod` over the full tree wants to remove node_modules, and
+# prompts for it; a docker RUN has no TTY to answer with.
+ENV CI=true
 
 WORKDIR /app
 
-RUN corepack enable
+# The bun image ships no package manager, so install the pinned pnpm. It runs
+# on bun's `node` shim, and turbo shells out to it to run package scripts.
+COPY package.json .
+RUN bun install -g "$(bun -e "console.log(require('./package.json').packageManager)")"
 
 ###########################################################
 # Sourcer
 ###########################################################
 FROM base AS sourcer
 
-COPY package.json .
-RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
-  pnpm install -g turbo@$(jq -r '.devDependencies.turbo' package.json)
+RUN bun install -g "turbo@$(bun -e "console.log(require('./package.json').devDependencies.turbo)")"
 
 COPY . .
-RUN turbo prune --scope=api --docker
+RUN turbo prune api --docker
 
 ###########################################################
 # Deps
@@ -56,11 +57,7 @@ FROM base AS builder
 COPY --from=deps /app/ .
 COPY --from=sourcer /app/out/full/ .
 
-RUN curl -fsSL https://bun.sh/install | bash
-ENV BUN_INSTALL="/root/.bun"
-ENV PATH="$BUN_INSTALL/bin:$PATH"
-
-RUN bun turbo run build --filter=api...
+RUN turbo run build --filter=api...
 
 ##########################################################
 # Runtime
@@ -74,10 +71,11 @@ RUN addgroup --system --gid 1001 apiuser && \
 
 USER apiuser
 
+WORKDIR /app
+
 COPY --from=prod-deps /app/ .
+COPY --from=builder /app/apps/api/dist ./apps/api/dist
 
 WORKDIR /app/apps/api
-
-COPY --from=builder /app/apps/api/dist ./dist
 
 CMD ["bun", "start"]
