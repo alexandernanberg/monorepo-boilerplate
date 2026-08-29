@@ -14,7 +14,7 @@ import {
   getSession,
 } from '../session'
 
-describe.only('getSession', () => {
+describe('getSession', () => {
   beforeEach(async () => {
     setSystemTime()
 
