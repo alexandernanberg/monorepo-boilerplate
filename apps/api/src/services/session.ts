@@ -16,11 +16,19 @@ import { ServerError } from '~/lib/server-error'
  * A session token is a bearer credential: anyone holding it is the user, so it
  * has to be unguessable.
  *
- * 256 bits straight from the CSPRNG, base32-encoded. Deliberately *not* cuid2
- * — that is an identifier generator optimised for collision resistance and
- * horizontal scaling, and its own documentation says not to use it for
- * security tokens. Only the SHA-256 hash is stored, so a leaked database dump
- * does not hand over live sessions.
+ * 32 bytes straight from the CSPRNG, base32-encoded.
+ *
+ * Not cuid2 — though not because cuid2 is weak. At length 32 it hashes roughly
+ * 165 bits of CSPRNG-derived entropy with SHA3-512, which is ample for this.
+ * The reasons are narrower: it falls back to `Math.random` when
+ * `globalThis.crypto` is missing, and does so silently, which is the one
+ * failure a bearer credential must not take quietly — `getRandomValues` throws
+ * instead. And 256 uniform bits is a claim you can check at a glance, where
+ * cuid2's requires accounting for entropy through a hash-and-truncate of mixed
+ * predictable and random inputs. Hardening, not a vulnerability fix.
+ *
+ * Only the SHA-256 hash is stored, so a leaked database dump does not hand over
+ * live sessions.
  */
 function createSessionToken() {
   const bytes = new Uint8Array(32)

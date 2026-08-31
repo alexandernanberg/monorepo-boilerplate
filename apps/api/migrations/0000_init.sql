@@ -53,8 +53,7 @@ CREATE TABLE "users" (
 	"given_name" text,
 	"family_name" text,
 	"email" text NOT NULL,
-	"email_verified" boolean DEFAULT false NOT NULL,
-	"password_hash" text
+	"email_verified" boolean DEFAULT false NOT NULL
 );
 --> statement-breakpoint
 ALTER TABLE "email_change_requests" ADD CONSTRAINT "email_change_requests_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -62,8 +61,12 @@ ALTER TABLE "login_challenges" ADD CONSTRAINT "login_challenges_user_id_users_id
 ALTER TABLE "sessions" ADD CONSTRAINT "sessions_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "email_change_requests_new_email_index" ON "email_change_requests" USING btree ("new_email");--> statement-breakpoint
 CREATE INDEX "email_change_requests_user_id_index" ON "email_change_requests" USING btree ("user_id");--> statement-breakpoint
-CREATE INDEX "login_challenges_user_id_index" ON "login_challenges" USING btree ("user_id");--> statement-breakpoint
+CREATE INDEX "email_change_requests_expires_at_index" ON "email_change_requests" USING btree ("expires_at");--> statement-breakpoint
+CREATE UNIQUE INDEX "login_challenges_user_id_index" ON "login_challenges" USING btree ("user_id");--> statement-breakpoint
+CREATE INDEX "login_challenges_expires_at_index" ON "login_challenges" USING btree ("expires_at");--> statement-breakpoint
 CREATE INDEX "sessions_user_id_index" ON "sessions" USING btree ("user_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "sessions_token_hash_index" ON "sessions" USING btree ("token_hash");--> statement-breakpoint
+CREATE INDEX "sessions_expires_at_index" ON "sessions" USING btree ("expires_at");--> statement-breakpoint
 CREATE UNIQUE INDEX "signup_challenges_email_index" ON "signup_challenges" USING btree ("email");--> statement-breakpoint
+CREATE INDEX "signup_challenges_expires_at_index" ON "signup_challenges" USING btree ("expires_at");--> statement-breakpoint
 CREATE UNIQUE INDEX "users_email_index" ON "users" USING btree ("email");

@@ -6,10 +6,15 @@
 - Passwordless email login
 - Renew sessions automatically
 
-Session tokens are 256 bits from the CSPRNG, base32-encoded, and only their
+Session tokens are 32 bytes from the CSPRNG, base32-encoded, and only their
 SHA-256 hash is stored — a database dump does not hand over live sessions.
-Deliberately not cuid2: that is an identifier generator, and its own
-documentation says not to use it for security tokens.
+
+Not cuid2, though not because cuid2 is weak: at length 32 it hashes roughly 165
+bits of CSPRNG-derived entropy with SHA3-512, which is ample. The reasons are
+narrower — it falls back to `Math.random` when `globalThis.crypto` is missing,
+and does so silently, where `getRandomValues` throws; and raw random bytes are
+easier to audit than entropy accounting through a hash-and-truncate. Treat the
+swap as hardening rather than a fix for a vulnerability.
 
 ### Account enumeration
 
@@ -93,6 +98,12 @@ received the connection from, making the rightmost the only one ours vouches for
 
 Generated with `pnpm db:generate` and applied with `pnpm db:migrate`, which runs
 `src/migrate.ts` — a standalone entrypoint bundled next to `server.js`.
+
+The history was squashed to a single `0000_init` covering the whole schema. Any
+database created before that squash disagrees with the journal and must be
+dropped and re-migrated — `docker compose down -v && docker compose up -d`, then
+`pnpm db:migrate`. That is a one-time cost of starting from a boilerplate, not
+something to repeat once real data exists.
 
 In production, run it as its own step so exactly one process applies migrations
 and a failure stops the deploy before new instances start serving.
