@@ -68,3 +68,39 @@ jobs:
         with:
           bun: 'true'
       - run: pnpm build
+
+  docker:
+    name: Docker
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@v3
+      # Read rather than hardcoded: the Dockerfile asserts the two agree, so a
+      # literal here would just move the drift somewhere less visible.
+      - id: bun
+        run: echo "version=$(tr -d '[:space:]' < .bun-version)" >> "$GITHUB_OUTPUT"
+      # The Dockerfile is the most intricate file in the repo — multi-stage,
+      # `turbo prune`, a pinned Bun that has to match `.bun-version`. Nothing
+      # else in CI compiles it, so without this it rots silently until a deploy.
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          build-args: BUN_VERSION=${{ steps.bun.outputs.version }}
+          push: false
+          load: true
+          tags: api:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      # Proves the image actually boots, refuses an incomplete configuration,
+      # and that migrations shipped inside it.
+      - name: Verify the image refuses an incomplete configuration
+        run: |
+          set -o pipefail
+          ! docker run --rm -e NODE_ENV=production api:ci 2>&1 | tee /tmp/out
+          grep -q 'Invalid configuration' /tmp/out
+      - name: Verify migrations shipped in the image
+        run: docker run --rm --entrypoint sh api:ci -c 'ls migrations/*.sql' | head

@@ -33,6 +33,31 @@ beforeEach(async () => {
   ])
 })
 
+/**
+ * Spend an IP's whole bucket, then return the response to one more request.
+ *
+ * The clock is frozen for the burst so the result cannot depend on how long
+ * argon2 takes: a refill landing mid-burst would hand back a token and the
+ * assertion would flake. Bodies are generated per request so nothing else —
+ * a duplicate email, a spent challenge — can be what rejects them.
+ */
+async function exhaustIpRateLimit(
+  path: string,
+  ip: string,
+  body: () => unknown,
+) {
+  setSystemTime(new Date())
+
+  for (let attempt = 0; attempt < config.RATE_LIMIT_IP_BUCKET_SIZE; attempt++) {
+    await app.fetch(TestRequest.json(path, 'POST', body()), getRequestEnv(ip))
+  }
+
+  return await app.fetch(
+    TestRequest.json(path, 'POST', body()),
+    getRequestEnv(ip),
+  )
+}
+
 describe('POST /auth/signup', () => {
   test('generates code and sends email', async () => {
     const email = faker.internet.email()
@@ -90,37 +115,23 @@ describe('POST /auth/signup', () => {
     )
   })
 
-  test.skip('enforces IP rate limit', async () => {
-    const email = faker.internet.email()
-
-    const count = 20
-
-    await Promise.all(
-      Array.from(
-        { length: count },
-        async () =>
-          await app.fetch(
-            TestRequest.json('/auth/signup', 'POST', { email }),
-            getRequestEnv(),
-          ),
-      ),
-    )
-
-    const res = await app.fetch(
-      TestRequest.json('/auth/signup', 'POST', { email }),
-      getRequestEnv(),
-    )
+  test('enforces IP rate limit', async () => {
+    const res = await exhaustIpRateLimit('/auth/signup', '203.0.113.1', () => ({
+      email: faker.internet.email(),
+    }))
 
     expect(res.status).toBe(429)
     expect(await res.json()).toEqual(
       expect.objectContaining({ code: 'RATE_LIMIT_EXCEEDED' }),
     )
+    expect(Number(res.headers.get('retry-after'))).toBeGreaterThan(0)
 
+    // A different caller has its own bucket.
     const resOtherIp = await app.fetch(
       TestRequest.json('/auth/signup', 'POST', {
         email: faker.internet.email(),
       }),
-      getRequestEnv('127.0.0.2'),
+      getRequestEnv('203.0.113.2'),
     )
 
     expect(resOtherIp.status).toBe(204)
@@ -291,23 +302,11 @@ describe('POST /auth/signup/verify', () => {
     )
   })
 
-  test.skip('enforces IP rate limit', async () => {
-    const email = faker.internet.email()
-
-    await app.fetch(
-      TestRequest.json('/auth/signup/verify', 'POST', {
-        email,
-        code: '123456',
-      }),
-      getRequestEnv(),
-    )
-
-    const res = await app.fetch(
-      TestRequest.json('/auth/signup/verify', 'POST', {
-        email,
-        code: '123456',
-      }),
-      getRequestEnv(),
+  test('enforces IP rate limit', async () => {
+    const res = await exhaustIpRateLimit(
+      '/auth/signup/verify',
+      '203.0.113.3',
+      () => ({ email: faker.internet.email(), code: '12345678' }),
     )
 
     expect(res.status).toBe(429)
@@ -430,33 +429,24 @@ describe('POST /auth/email', () => {
     )
   })
 
-  test.skip('enforces IP rate limit', async () => {
-    const email = faker.internet.email()
-    await seedUser(email)
-
-    await app.fetch(
-      TestRequest.json('/auth/email', 'POST', { email }),
-      getRequestEnv(),
-    )
-
-    const res = await app.fetch(
-      TestRequest.json('/auth/email', 'POST', { email }),
-      getRequestEnv(),
-    )
+  test('enforces IP rate limit', async () => {
+    // The bucket is spent before the handler looks the address up, so unknown
+    // emails drain it just as well as real ones.
+    const res = await exhaustIpRateLimit('/auth/email', '203.0.113.4', () => ({
+      email: faker.internet.email(),
+    }))
 
     expect(res.status).toBe(429)
     expect(await res.json()).toEqual(
       expect.objectContaining({ code: 'RATE_LIMIT_EXCEEDED' }),
     )
 
-    const email2 = faker.internet.email()
-    await seedUser(email2)
+    const email = faker.internet.email()
+    await seedUser(email)
 
     const resOtherIp = await app.fetch(
-      TestRequest.json('/auth/email', 'POST', {
-        email: email2,
-      }),
-      getRequestEnv('127.0.0.2'),
+      TestRequest.json('/auth/email', 'POST', { email }),
+      getRequestEnv('203.0.113.5'),
     )
 
     expect(resOtherIp.status).toBe(204)

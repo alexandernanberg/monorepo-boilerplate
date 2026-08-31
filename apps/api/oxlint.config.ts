@@ -16,10 +16,11 @@ export default defineConfig({
       },
     },
     {
-      // Placeholder that is filled in per project.
-      files: ['seed/**'],
+      // Seeds and build scripts are one-shot programs run by a developer; their
+      // output is the point.
+      files: ['seed/**', 'scripts/**'],
       rules: {
-        'unicorn/no-empty-file': 'off',
+        'no-console': 'off',
       },
     },
   ],

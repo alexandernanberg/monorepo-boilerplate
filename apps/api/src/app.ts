@@ -25,7 +25,33 @@ const app = new Hono<EvlogVariables>()
 // request logger via `ctx.get('log')`. One wide event is emitted per request.
 app.use(evlog())
 
-app.use(csrf())
+const csrfProtection = csrf()
+
+/**
+ * Hono's `csrf()` substitutes `text/plain` for a missing `Content-Type`, and
+ * `text/plain` is one of the types a browser form can post — so any request
+ * without a content-type is treated as a form submission and rejected unless it
+ * happens to carry a matching `Origin`.
+ *
+ * `POST /auth/logout` has no body, so a client sends no content-type and gets a
+ * 403: logout fails while the client believes it succeeded, and the session
+ * stays live. Only browsers were unaffected, because they send `Origin`.
+ *
+ * A request with neither a body nor a declared content-type cannot be a form
+ * submission, so it is exempt; everything else is checked as before. Worth
+ * noting that this API authenticates on the `Authorization` header rather than
+ * a cookie, which is what actually makes CSRF a non-issue here — a cross-site
+ * form cannot set that header. The middleware stays as defence in depth for
+ * whenever cookies do appear.
+ */
+app.use(async (ctx, next) => {
+  if (ctx.req.raw.body === null && !ctx.req.header('content-type')) {
+    return await next()
+  }
+
+  return await csrfProtection(ctx, next)
+})
+
 app.use(secureHeaders())
 
 // Only emit CORS headers when origins are actually configured. A same-origin or

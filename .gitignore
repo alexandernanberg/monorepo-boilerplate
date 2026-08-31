@@ -16,3 +16,8 @@ dist
 
 # local scratch
 .probe
+
+# env
+.env
+.env.*
+!.env.example

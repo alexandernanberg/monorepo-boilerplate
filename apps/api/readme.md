@@ -6,6 +6,129 @@
 - Passwordless email login
 - Renew sessions automatically
 
+Session tokens are 256 bits from the CSPRNG, base32-encoded, and only their
+SHA-256 hash is stored — a database dump does not hand over live sessions.
+Deliberately not cuid2: that is an identifier generator, and its own
+documentation says not to use it for security tokens.
+
+### Account enumeration
+
+`POST /auth/signup` answers `409 ACCOUNT_EXISTS` for an address that is already
+registered, and `POST /auth/email` answers `404 NO_ACCOUNT` for one that is not.
+Both let anyone test whether an email has an account here.
+
+This is a deliberate trade for a clearer signup flow, not an oversight. To close
+it, answer `204` from both regardless and send a "someone tried to sign up with
+your address" email instead — the client then cannot tell the two cases apart.
+Do that before launching anything where mere membership is sensitive.
+
+### CSRF
+
+`csrf()` is mounted, but note what actually protects this API: authentication is
+an `Authorization: Bearer` header, and a cross-site form cannot set one. CSRF is
+a cookie problem; the middleware is defence in depth for whenever cookies appear.
+
+It is wrapped rather than used directly. Hono substitutes `text/plain` for a
+missing `Content-Type` and treats that as a browser form post, so a bodyless
+request — `POST /auth/logout` — was rejected with 403 unless it carried a
+matching `Origin`. Browsers send one; mobile, CLI and server-to-server clients
+do not, so logout failed for them while reporting nothing to the caller and
+leaving the session live. Requests with neither a body nor a content-type are
+now exempt; anything a form could actually send is still checked.
+
+## Configuration
+
+`src/config.ts` reads every value from the environment and validates it with
+Zod. Development and test carry working defaults; production requires the
+secrets explicitly and **refuses to boot** without them, listing everything
+that is missing or malformed in one go.
+
+| Variable                                                         | Default (dev)                  | Notes                                          |
+| ---------------------------------------------------------------- | ------------------------------ | ---------------------------------------------- |
+| `NODE_ENV`                                                       | `development`                  | `development`, `production` or `test`          |
+| `PORT`                                                           | `4000`                         |                                                |
+| `DATABASE_URL`                                                   | local Postgres                 | **Required in production**                     |
+| `REDIS_HOST` / `REDIS_PORT`                                      | `localhost` / `6379`           | **Required in production**                     |
+| `REDIS_USER` / `REDIS_PASSWORD`                                  | empty                          |                                                |
+| `SMTP_HOST` / `SMTP_PORT`                                        | `localhost` / `1025`           | **Required in production**                     |
+| `SMTP_USER` / `SMTP_PASSWORD`                                    | empty                          | **Required in production**                     |
+| `SMTP_TLS`                                                       | `false` (`true` in production) |                                                |
+| `EMAIL_SENDER`                                                   | `noreply@acme.inc`             | **Required in production**                     |
+| `TRUST_PROXY`                                                    | `false`                        | See below                                      |
+| `CORS_ORIGINS`                                                   | empty                          | Comma-separated; no headers emitted when empty |
+| `MAX_REQUEST_BODY_BYTES`                                         | `65536`                        | Rejected before the body is read               |
+| `GRAPHIQL_ENABLED`                                               | `true` (`false` in production) | Also gates introspection                       |
+| `GRAPHQL_MAX_DEPTH`                                              | `12`                           |                                                |
+| `SESSION_TTL_DAYS`                                               | `30`                           |                                                |
+| `SESSION_LAST_ACTIVE_THRESHOLD_MINUTES`                          | `10`                           |                                                |
+| `SIGNUP_CODE_TTL_MINUTES` / `LOGIN_CODE_TTL_MINUTES`             | `15`                           |                                                |
+| `MAX_FAILED_SIGNUP_ATTEMPTS` / `MAX_FAILED_EMAIL_LOGIN_ATTEMPTS` | `3`                            |                                                |
+| `RATE_LIMIT_IP_BUCKET_SIZE`                                      | `10`                           |                                                |
+| `RATE_LIMIT_IP_BUCKET_REFILL_RATE_SECONDS`                       | `1`                            |                                                |
+| `CLEANUP_INTERVAL_MINUTES`                                       | `60`                           | `0` disables the sweeper                       |
+| `MIGRATE_ON_START`                                               | `false`                        | See Migrations                                 |
+| `SHUTDOWN_TIMEOUT_SECONDS`                                       | `10`                           | Keep below the platform's grace period         |
+
+`NODE_ENV` must be read as `process.env['NODE_ENV']`, never
+`process.env.NODE_ENV`. Bun's bundler replaces the dotted form with its
+_build-time_ value, which silently pins the built image to whatever environment
+built it — unredacted logs, no SMTP auth, development config, and no error to
+say so. `scripts/check-bundle.ts` runs as part of `build` and fails if it
+reappears.
+
+### Behind a proxy
+
+`getConnInfo` reports the TCP peer, which behind a load balancer is the load
+balancer: every request lands in one rate-limit bucket and every stored
+`ipAddress` is the proxy. Set `TRUST_PROXY=true` and `Fly-Client-IP` /
+`X-Forwarded-For` are believed instead.
+
+Only set it when something upstream actually overwrites those headers. Exposed
+directly, they are client-controlled — anyone could mint a fresh address per
+request and never reach a limit. `TRUST_PROXY` assumes exactly one trusted hop,
+so the _last_ `X-Forwarded-For` entry is used: each proxy appends the address it
+received the connection from, making the rightmost the only one ours vouches for.
+
+## Migrations
+
+Generated with `pnpm db:generate` and applied with `pnpm db:migrate`, which runs
+`src/migrate.ts` — a standalone entrypoint bundled next to `server.js`.
+
+In production, run it as its own step so exactly one process applies migrations
+and a failure stops the deploy before new instances start serving.
+`apps/api/fly.toml` does this with `release_command`. For single-instance
+deploys where that ceremony is not worth it, `MIGRATE_ON_START=true` migrates
+during boot instead, before the server accepts connections.
+
+The `migrations/` directory ships inside the image; the runner looks for it
+relative to itself, which differs between source, a local `dist/` build and the
+container.
+
+## Rate limiting
+
+Two Redis-backed limiters in `src/lib/rate-limiter.ts`, both implemented as Lua
+so the read-modify-write is atomic:
+
+- `BucketRateLimiter` — a token bucket that absorbs a burst up to its size, then
+  admits traffic at the refill rate. Its key expires exactly when the bucket
+  would be full again; expiring sooner would silently hand back a full bucket
+  and turn the limit into "max per interval" with no refill at all.
+- `ThrottlingRateLimiter` — an escalating lockout (1s, 2s, 4s … 5min) that resets
+  after an hour of inactivity or an explicit `reset()`. Used per-email on the
+  verify routes, so guessing a code gets expensive while a user who succeeds
+  clears their counter.
+
+Both are registered with ioredis' `defineCommand`, which keeps the script SHA
+and retries with `EVAL` on `NOSCRIPT`. Caching a SHA by hand means a Redis
+restart fails every auth route until the process is redeployed.
+
+## Cleanup
+
+Expired sessions and challenges are swept every `CLEANUP_INTERVAL_MINUTES` by
+`src/services/cleanup.ts`, bounded by an index on each table's `expires_at`.
+Nothing deleted them before, so the tables grew for the life of the deployment.
+Running several instances is harmless — the deletes are idempotent.
+
 ## Logging
 
 Logging goes through [evlog](https://evlog.dev), configured once in
@@ -98,3 +221,7 @@ equivalent, so `.delete()` and `.update()` calls are no longer checked for a
 
 - [ ] Passkeys
 - [ ] Change email?
+- [ ] Ship logs somewhere — evlog has drains for Axiom, OTLP, Datadog and
+      others; wire one up via `initLogger({ drain })` and flush it on shutdown
+- [ ] Decide on account enumeration before launch (see Auth)
+- [ ] Query cost limiting, if the schema grows past what depth alone bounds
