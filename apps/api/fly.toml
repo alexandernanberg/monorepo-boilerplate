@@ -7,7 +7,13 @@ kill_signal = "SIGTERM"
 kill_timeout = "15s"
 
 [build]
-  dockerfile = "Dockerfile" 
+  dockerfile = "Dockerfile"
+
+[deploy]
+  # Runs once per deploy, on one machine, before any new instance takes traffic.
+  # A failed migration therefore fails the deploy instead of leaving instances
+  # serving against a schema they do not match.
+  release_command = "bun migrate.js"
 
 [env]
   NODE_ENV = "production"

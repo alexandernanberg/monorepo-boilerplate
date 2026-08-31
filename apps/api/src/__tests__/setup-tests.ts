@@ -3,8 +3,17 @@ import { afterAll } from 'bun:test'
 import { client, upgradeDatabase } from '~/db'
 import { redis } from '~/lib/redis'
 
-console.log('Starting containers...')
-await $`docker compose -f ../../docker-compose.test.yml -p test up -d`.quiet()
+/**
+ * Set when Postgres, Redis and Mailpit are already listening on the test ports
+ * — a CI job using service containers, or a developer keeping the stack up
+ * between runs rather than paying `compose up`/`down` on every `bun test`.
+ */
+const servicesAreExternal = Boolean(process.env['TEST_SERVICES_EXTERNAL'])
+
+if (!servicesAreExternal) {
+  console.log('Starting containers...')
+  await $`docker compose -f ../../docker-compose.test.yml -p test up -d`.quiet()
+}
 
 console.log('Waiting for Redis to be available...')
 await waitFor('Redis', () => redis.ping())
@@ -18,7 +27,10 @@ await upgradeDatabase()
 afterAll(async () => {
   await redis.quit()
   await client.end()
-  await $`docker compose -p test down`.quiet()
+
+  if (!servicesAreExternal) {
+    await $`docker compose -p test down`.quiet()
+  }
 })
 
 async function waitFor(label: string, cb: () => Promise<unknown>) {

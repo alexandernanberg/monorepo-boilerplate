@@ -6,15 +6,8 @@ import { usersTable } from '~/db/schema'
 import { ForbiddenError, NotFoundError } from '~/lib/server-error'
 import type { CurrentUser } from '~/services/user'
 
-const DEBUG: boolean = false
-function log(...data: Array<unknown>) {
-  if (DEBUG) console.log(...data)
-}
-
 export function createDataSources(currentUser: CurrentUser) {
   const userLoader = new DataLoader<string, User>(async (ids) => {
-    log('userLoader', ids)
-
     const users = await db.query.usersTable.findMany({
       where: and(
         inArray(usersTable.id, [...ids]),

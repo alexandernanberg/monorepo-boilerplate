@@ -13,3 +13,6 @@ dist
 
 # turbo
 .turbo
+
+# local scratch
+.probe

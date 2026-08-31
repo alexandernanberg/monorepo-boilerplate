@@ -1,31 +1,6 @@
-// https://bun.sh/docs/typescript#suggested-compileroptions
 {
+  "extends": "@repo/tsconfig/base.json",
   "compilerOptions": {
-    // Enable latest features
-    "lib": ["ESNext", "DOM"],
-    "target": "ESNext",
-    "module": "ESNext",
-    "moduleDetection": "force",
-    "jsx": "react-jsx",
-    "allowJs": true,
-
-    // Bundler mode
-    "moduleResolution": "bundler",
-    "allowImportingTsExtensions": true,
-    "verbatimModuleSyntax": true,
-    "noEmit": true,
-
-    // Best practices
-    "strict": true,
-    "skipLibCheck": true,
-    "noFallthroughCasesInSwitch": true,
-    "noPropertyAccessFromIndexSignature": true,
-    "noUncheckedIndexedAccess": true,
-
-    // `oxlint-config-alexandernanberg` ships plain JS with JSDoc types, so let
-    // TS read it to type `oxlint.config.ts`.
-    "maxNodeModuleJsDepth": 1,
-
     /* Types */
     "types": ["bun-types"],
 

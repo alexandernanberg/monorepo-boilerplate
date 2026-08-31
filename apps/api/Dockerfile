@@ -57,6 +57,10 @@ ENV NODE_ENV=production
 WORKDIR /app
 
 COPY --from=builder --chown=bun:bun /app/apps/api/dist ./
+# The migration runner resolves these relative to itself. Without them the image
+# can start the server but cannot bring the schema up to date, which leaves no
+# way to migrate a deployment at all.
+COPY --from=builder --chown=bun:bun /app/apps/api/migrations ./migrations
 
 USER bun
 

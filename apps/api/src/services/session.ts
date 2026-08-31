@@ -1,6 +1,8 @@
 import { sha256 } from '@oslojs/crypto/sha2'
-import { encodeHexLowerCase } from '@oslojs/encoding'
-import { init } from '@paralleldrive/cuid2'
+import {
+  encodeBase32LowerCaseNoPadding,
+  encodeHexLowerCase,
+} from '@oslojs/encoding'
 import { and, eq, isNull, sql } from 'drizzle-orm'
 import type { PgUpdateSetSource } from 'drizzle-orm/pg-core'
 import ms from 'ms'
@@ -10,7 +12,21 @@ import type { Session } from '~/db/schema'
 import { sessionsTable } from '~/db/schema'
 import { ServerError } from '~/lib/server-error'
 
-const createSessionToken = init({ length: 32 })
+/**
+ * A session token is a bearer credential: anyone holding it is the user, so it
+ * has to be unguessable.
+ *
+ * 256 bits straight from the CSPRNG, base32-encoded. Deliberately *not* cuid2
+ * — that is an identifier generator optimised for collision resistance and
+ * horizontal scaling, and its own documentation says not to use it for
+ * security tokens. Only the SHA-256 hash is stored, so a leaked database dump
+ * does not hand over live sessions.
+ */
+function createSessionToken() {
+  const bytes = new Uint8Array(32)
+  crypto.getRandomValues(bytes)
+  return encodeBase32LowerCaseNoPadding(bytes)
+}
 
 function createSessionTokenHash(token: string) {
   return encodeHexLowerCase(sha256(new TextEncoder().encode(token)))

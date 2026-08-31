@@ -1,7 +1,7 @@
 import { hash, verify } from '@node-rs/argon2'
 import type { RandomReader } from '@oslojs/crypto/random'
 import { generateRandomString } from '@oslojs/crypto/random'
-import { and, eq, gt, sql } from 'drizzle-orm'
+import { eq, lte, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { z } from 'zod'
 import { config } from '~/config'
@@ -67,40 +67,49 @@ authRouter.post('/signup', async (ctx) => {
   const code = generateCode()
   const codeHash = await hash(code)
 
-  await db.transaction(async (tx) => {
-    const existingCode = await tx.query.signupChallengesTable.findFirst({
-      where: and(
-        eq(signupChallengesTable.email, email),
-        gt(signupChallengesTable.expiresAt, sql`now()`),
-      ),
-    })
+  const expiresAt = sql`now() + (${config.SIGNUP_CODE_TTL_MINUTES} || 'minutes')::interval`
 
-    if (existingCode) {
-      throw new ServerError(
-        409,
-        'VERIFICATION_IN_PROGRESS',
-        'Account verification is already in progress. Please check your inbox and spam folder.',
-      )
-    }
-
-    await tx
-      .delete(signupChallengesTable)
-      .where(eq(signupChallengesTable.email, email))
-
-    await tx.insert(signupChallengesTable).values({
+  // One upsert rather than check-then-delete-then-insert. Two concurrent
+  // signups for the same address would each pass a separate existence check and
+  // then collide on the unique index, turning an orderly 409 into a 500.
+  // `setWhere` hands the decision to Postgres: the row is replaced only when
+  // the challenge already there has expired.
+  const [challenge] = await db
+    .insert(signupChallengesTable)
+    .values({
       email,
       codeHash,
-      expiresAt: sql`now() + (${config.SIGNUP_CODE_TTL_MINUTES} || 'minutes')::interval`,
+      expiresAt,
       ipAddress: ip,
       userAgent,
     })
-  })
+    .onConflictDoUpdate({
+      target: signupChallengesTable.email,
+      set: {
+        codeHash,
+        expiresAt,
+        ipAddress: ip,
+        userAgent,
+        createdAt: sql`now()`,
+        failedAttempts: 0,
+      },
+      setWhere: lte(signupChallengesTable.expiresAt, sql`now()`),
+    })
+    .returning()
+
+  if (!challenge) {
+    throw new ServerError(
+      409,
+      'VERIFICATION_IN_PROGRESS',
+      'Account verification is already in progress. Please check your inbox and spam folder.',
+    )
+  }
 
   await emailClient.sendMail({
     to: email,
     from: config.EMAIL_SENDER,
     subject: `Your signup code is: ${code}`,
-    text: `Your signup code is: ${code}. The code is valid for 15 minutes.`,
+    text: `Your signup code is: ${code}. The code is valid for ${config.SIGNUP_CODE_TTL_MINUTES} minutes.`,
   })
 
   log.set({ auth: { challengeSent: true } })
@@ -151,49 +160,54 @@ authRouter.post('/signup/verify', async (ctx) => {
 
   await signupVerifyRateLimiterEmail.consume(email)
 
-  await db.transaction(async (tx) => {
-    const signupChallenge = await tx.query.signupChallengesTable.findFirst({
-      where: eq(signupChallengesTable.email, email),
-    })
-
-    if (!signupChallenge) {
-      throw new ServerError(400, 'INVALID_CODE', 'Invalid code')
-    }
-
-    if (signupChallenge.expiresAt.getTime() < Date.now()) {
-      throw new ServerError(410, 'CODE_EXPIRED', 'Code has expired')
-    }
-
-    if (signupChallenge.failedAttempts >= config.MAX_FAILED_SIGNUP_ATTEMPTS) {
-      throw new ServerError(
-        429,
-        'TOO_MANY_ATTEMPTS',
-        'Maximum verification attempts exceeded. Please request a new code',
-      )
-    }
-
-    if (!(await verify(signupChallenge.codeHash, code))) {
-      const updated = await tx
-        .update(signupChallengesTable)
-        .set({
-          failedAttempts: sql`${signupChallengesTable.failedAttempts} + 1`,
-        })
-        .where(eq(signupChallengesTable.id, signupChallenge.id))
-        .returning()
-        .then((res) => res[0]!)
-
-      log.set({ auth: { failedAttempts: updated.failedAttempts } })
-
-      await tx.execute(sql`commit`)
-
-      throw new ServerError(400, 'INVALID_CODE', 'Invalid code')
-    }
-
-    // Delete used code
-    await tx
-      .delete(signupChallengesTable)
-      .where(eq(signupChallengesTable.email, email))
+  const signupChallenge = await db.query.signupChallengesTable.findFirst({
+    where: eq(signupChallengesTable.email, email),
   })
+
+  if (!signupChallenge) {
+    throw new ServerError(400, 'INVALID_CODE', 'Invalid code')
+  }
+
+  if (signupChallenge.expiresAt.getTime() < Date.now()) {
+    throw new ServerError(410, 'CODE_EXPIRED', 'Code has expired')
+  }
+
+  if (signupChallenge.failedAttempts >= config.MAX_FAILED_SIGNUP_ATTEMPTS) {
+    throw new ServerError(
+      429,
+      'TOO_MANY_ATTEMPTS',
+      'Maximum verification attempts exceeded. Please request a new code',
+    )
+  }
+
+  if (!(await verify(signupChallenge.codeHash, code))) {
+    // Deliberately not inside a transaction: the increment has to survive the
+    // throw, and a wrapping transaction would roll it back — letting an
+    // attacker guess forever. (This used to be worked around by issuing a raw
+    // `COMMIT` mid-transaction and leaving Drizzle to roll back nothing.)
+    const updated = await db
+      .update(signupChallengesTable)
+      .set({ failedAttempts: sql`${signupChallengesTable.failedAttempts} + 1` })
+      .where(eq(signupChallengesTable.id, signupChallenge.id))
+      .returning()
+      .then((res) => res[0])
+
+    log.set({ auth: { failedAttempts: updated?.failedAttempts } })
+
+    throw new ServerError(400, 'INVALID_CODE', 'Invalid code')
+  }
+
+  // Redeeming the challenge *is* the delete: if it removes nothing, a
+  // concurrent request already spent this code, so it is no longer valid.
+  const consumed = await db
+    .delete(signupChallengesTable)
+    .where(eq(signupChallengesTable.id, signupChallenge.id))
+    .returning()
+    .then((res) => res[0])
+
+  if (!consumed) {
+    throw new ServerError(400, 'INVALID_CODE', 'Invalid code')
+  }
 
   const token = createSessionToken()
   const session = await db.transaction(async (tx) => {
@@ -263,24 +277,30 @@ authRouter.post('/email', async (ctx) => {
   const code = generateCode()
   const codeHash = await hash(code)
 
-  await db.transaction(async (tx) => {
-    // Delete existing code
-    await tx
-      .delete(loginChallengesTable)
-      .where(eq(loginChallengesTable.userId, user.id))
-
-    await tx
-      .insert(loginChallengesTable)
-      .values({
-        userId: user.id,
+  // Replaces any challenge the user already has, in one statement. The
+  // delete-then-insert this used to be could interleave with a concurrent
+  // request and leave two live challenges behind, and verification picks one of
+  // them arbitrarily — so the code in the newest email might simply not work.
+  await db
+    .insert(loginChallengesTable)
+    .values({
+      userId: user.id,
+      codeHash,
+      expiresAt: sql`now() + (${config.LOGIN_CODE_TTL_MINUTES} || 'minutes')::interval`,
+      ipAddress: ip,
+      userAgent,
+    })
+    .onConflictDoUpdate({
+      target: loginChallengesTable.userId,
+      set: {
         codeHash,
         expiresAt: sql`now() + (${config.LOGIN_CODE_TTL_MINUTES} || 'minutes')::interval`,
         ipAddress: ip,
         userAgent,
-      })
-      .returning()
-      .then((res) => res[0]!)
-  })
+        createdAt: sql`now()`,
+        failedAttempts: 0,
+      },
+    })
 
   // TODO: location. "We have received a sign-in attempt from Stockholm, Sweden"
 
@@ -288,7 +308,7 @@ authRouter.post('/email', async (ctx) => {
     to: email,
     from: config.EMAIL_SENDER,
     subject: `Your login code is: ${code}`,
-    text: `Your login code is: ${code}. The code is valid for 15 minutes.`,
+    text: `Your login code is: ${code}. The code is valid for ${config.LOGIN_CODE_TTL_MINUTES} minutes.`,
   })
 
   log.set({ auth: { challengeSent: true } })
@@ -302,7 +322,10 @@ authRouter.post('/email', async (ctx) => {
 
 const emailVerifyRateLimiterIp = new BucketRateLimiter(
   'email_login_verify_ip',
-  { size: config.RATE_LIMIT_IP_BUCKET_SIZE, refillRateSeconds: 2 },
+  {
+    size: config.RATE_LIMIT_IP_BUCKET_SIZE,
+    refillRateSeconds: config.RATE_LIMIT_IP_BUCKET_REFILL_RATE_SECONDS,
+  },
 )
 
 const emailVerifyRateLimiterEmail = new ThrottlingRateLimiter(
@@ -339,51 +362,50 @@ authRouter.post('/email/verify', async (ctx) => {
 
   log.set({ user: { id: user.id } })
 
-  await db.transaction(async (tx) => {
-    const loginChallenge = await tx.query.loginChallengesTable.findFirst({
-      where: eq(loginChallengesTable.userId, user.id),
-    })
-
-    if (!loginChallenge) {
-      throw new ServerError(400, 'INVALID_CODE', 'Invalid code')
-    }
-
-    if (loginChallenge.expiresAt.getTime() < Date.now()) {
-      throw new ServerError(410, 'CODE_EXPIRED', 'Code has expired')
-    }
-
-    if (
-      loginChallenge.failedAttempts >= config.MAX_FAILED_EMAIL_LOGIN_ATTEMPTS
-    ) {
-      throw new ServerError(
-        429,
-        'TOO_MANY_ATTEMPTS',
-        'Maximum verification attempts exceeded. Please request a new code',
-      )
-    }
-
-    if (!(await verify(loginChallenge.codeHash, code))) {
-      const updated = await tx
-        .update(loginChallengesTable)
-        .set({
-          failedAttempts: sql`${loginChallengesTable.failedAttempts} + 1`,
-        })
-        .where(eq(loginChallengesTable.id, loginChallenge.id))
-        .returning()
-        .then((res) => res[0]!)
-
-      log.set({ auth: { failedAttempts: updated.failedAttempts } })
-
-      await tx.execute(sql`commit`)
-
-      throw new ServerError(400, 'INVALID_CODE', 'Invalid code')
-    }
-
-    // Delete used code
-    await tx
-      .delete(loginChallengesTable)
-      .where(eq(loginChallengesTable.userId, user.id))
+  const loginChallenge = await db.query.loginChallengesTable.findFirst({
+    where: eq(loginChallengesTable.userId, user.id),
   })
+
+  if (!loginChallenge) {
+    throw new ServerError(400, 'INVALID_CODE', 'Invalid code')
+  }
+
+  if (loginChallenge.expiresAt.getTime() < Date.now()) {
+    throw new ServerError(410, 'CODE_EXPIRED', 'Code has expired')
+  }
+
+  if (loginChallenge.failedAttempts >= config.MAX_FAILED_EMAIL_LOGIN_ATTEMPTS) {
+    throw new ServerError(
+      429,
+      'TOO_MANY_ATTEMPTS',
+      'Maximum verification attempts exceeded. Please request a new code',
+    )
+  }
+
+  if (!(await verify(loginChallenge.codeHash, code))) {
+    // See the note on the signup equivalent: the increment must outlive the
+    // throw, which is why there is no transaction around it.
+    const updated = await db
+      .update(loginChallengesTable)
+      .set({ failedAttempts: sql`${loginChallengesTable.failedAttempts} + 1` })
+      .where(eq(loginChallengesTable.id, loginChallenge.id))
+      .returning()
+      .then((res) => res[0])
+
+    log.set({ auth: { failedAttempts: updated?.failedAttempts } })
+
+    throw new ServerError(400, 'INVALID_CODE', 'Invalid code')
+  }
+
+  const consumed = await db
+    .delete(loginChallengesTable)
+    .where(eq(loginChallengesTable.id, loginChallenge.id))
+    .returning()
+    .then((res) => res[0])
+
+  if (!consumed) {
+    throw new ServerError(400, 'INVALID_CODE', 'Invalid code')
+  }
 
   const token = createSessionToken()
   const session = await createSession(token, user.id, ip, userAgent)

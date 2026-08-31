@@ -66,7 +66,11 @@ export const emailChangeRequestsTable = pgTable(
     ipAddress: inet().notNull(),
     userAgent: text().notNull(),
   },
-  (table) => [index().on(table.newEmail), index().on(table.userId)],
+  (table) => [
+    index().on(table.newEmail),
+    index().on(table.userId),
+    index().on(table.expiresAt),
+  ],
 )
 
 export type EmailChangeRequest = typeof emailChangeRequestsTable.$inferSelect
@@ -87,7 +91,7 @@ export const signupChallengesTable = pgTable(
     ipAddress: inet().notNull(),
     userAgent: text().notNull(),
   },
-  (table) => [uniqueIndex().on(table.email)],
+  (table) => [uniqueIndex().on(table.email), index().on(table.expiresAt)],
 )
 
 export type SignupChallenge = typeof signupChallengesTable.$inferSelect
@@ -110,7 +114,11 @@ export const loginChallengesTable = pgTable(
     ipAddress: inet().notNull(),
     userAgent: text().notNull(),
   },
-  (table) => [index().on(table.userId)],
+  // Unique on `userId` so a user has at most one live login challenge. Two
+  // concurrent requests would otherwise leave two rows behind, and verification
+  // reads one of them arbitrarily — so the newest code emailed out is not
+  // necessarily the one that is checked.
+  (table) => [uniqueIndex().on(table.userId), index().on(table.expiresAt)],
 )
 
 export type LoginChallenge = typeof loginChallengesTable.$inferSelect
@@ -135,7 +143,11 @@ export const sessionsTable = pgTable(
     userAgent: text().notNull(),
     // TODO: sudo mode, lastVerifiedAt (when the session was last verified by mfa)
   },
-  (table) => [index().on(table.userId), uniqueIndex().on(table.tokenHash)],
+  (table) => [
+    index().on(table.userId),
+    uniqueIndex().on(table.tokenHash),
+    index().on(table.expiresAt),
+  ],
 )
 
 export type Session = typeof sessionsTable.$inferSelect
