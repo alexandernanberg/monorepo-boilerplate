@@ -1,5 +1,29 @@
 # API
 
+## Configuration
+
+Everything configurable lives in `src/config.ts`, as one class per environment:
+`Config` holds the development defaults (they match `docker-compose.yml`),
+`ProductionConfig` re-declares the variables that must come from the
+environment, and `TestConfig` pins the `docker-compose.test.yml` stack.
+
+Reads go through `fromEnv(name, schema, fallback?)`. Passing a fallback makes
+the variable optional; leaving it out makes it required, and a missing or
+invalid value is collected rather than thrown on the spot — a misconfigured
+deploy reports every problem in one boot instead of one per restart:
+
+```
+Invalid configuration for NODE_ENV=production:
+  - DATABASE_URL is missing
+  - SMTP_PORT is invalid: Too small: expected number to be >=1
+```
+
+Copy `.env.example` to `.env` to override anything locally; Bun loads it on its
+own. `.env` files are git-ignored, and the test environment ignores them
+outright — its connection targets are literals, because the suite truncates
+every table and flushes Redis between tests and a stray `DATABASE_URL` would
+point that at your development database.
+
 ## Auth
 
 - Rate limits
@@ -57,7 +81,7 @@ Datadog, Better Stack and others — wire one up via `initLogger({ drain })`.
 
 ## Shutdown
 
-`SIGTERM` (from Docker, Fly or Kubernetes) and `SIGINT` (Ctrl-C) start a
+`SIGTERM` (from Docker or Kubernetes) and `SIGINT` (Ctrl-C) start a
 graceful shutdown, wired up in `src/server.ts`:
 
 ```ts
@@ -74,8 +98,8 @@ same way: outside-in, so a draining request never loses something it is using.
 The whole sequence has `SHUTDOWN_TIMEOUT_SECONDS`. A hung close is raced
 against whatever time is left so the tasks behind it still run, then the
 process exits rather than waiting to be `SIGKILL`ed. Keep that budget below
-the platform's own grace period — `kill_timeout` in `fly.toml`,
-`terminationGracePeriodSeconds` on Kubernetes. A second signal exits
+the platform's own grace period — `terminationGracePeriodSeconds` on
+Kubernetes, `stop_grace_period` in Compose. A second signal exits
 immediately, which is what a second Ctrl-C expects.
 
 The container's `CMD` execs `bun server.js` directly instead of going through

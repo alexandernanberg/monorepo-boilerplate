@@ -1,12 +1,13 @@
 import { log } from 'evlog'
 import { app } from '~/app'
+import { config } from '~/config'
 import { client } from '~/db'
 import { emailClient } from '~/lib/email'
 import { redis } from '~/lib/redis'
 import { listenForShutdownSignals, onShutdown } from '~/lib/shutdown'
 
 const server = Bun.serve({
-  port: Number(process.env['PORT']) || 4000,
+  port: config.PORT,
   fetch: app.fetch,
 })
 

@@ -1,4 +1,5 @@
 import { defineConfig } from 'drizzle-kit'
+import { config } from './src/config'
 
 export default defineConfig({
   schema: './src/db/schema.ts',
@@ -6,6 +7,6 @@ export default defineConfig({
   out: 'migrations',
   casing: 'snake_case',
   dbCredentials: {
-    url: 'postgres://postgres:postgres@localhost:5432/workout',
+    url: config.DATABASE_URL,
   },
 })

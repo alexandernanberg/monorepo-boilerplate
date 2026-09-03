@@ -23,7 +23,7 @@ function onShutdown(name: string, close: () => Promise<unknown> | void) {
 
 /**
  * Start listening for the signals a supervisor uses to ask for a clean exit —
- * `SIGTERM` from Docker, Kubernetes and Fly, `SIGINT` from Ctrl-C.
+ * `SIGTERM` from Docker and Kubernetes, `SIGINT` from Ctrl-C.
  *
  * Without a handler the process dies mid-request, and as PID 1 (which is what
  * the container's `CMD` makes it) it ignores the signal entirely and waits to

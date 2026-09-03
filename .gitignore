@@ -13,3 +13,8 @@ dist
 
 # turbo
 .turbo
+
+# env
+.env
+.env.*
+!.env.example
