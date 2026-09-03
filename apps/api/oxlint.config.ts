@@ -13,6 +13,19 @@ export default defineConfig({
       files: ['**/__tests__/**', '**/*.test.ts'],
       rules: {
         'no-await-in-loop': 'off',
+
+        // Bun refuses `.only` when CI=true and errors out the whole file, so a
+        // leftover focused test fails CI rather than quietly narrowing the run.
+        // oxlint's jest/vitest plugin only recognises test functions imported
+        // from `vitest`/`@jest/globals`, not `bun:test`, so match by name here.
+        'no-restricted-properties': [
+          'error',
+          ...['describe', 'test', 'it'].map((object) => ({
+            object,
+            property: 'only',
+            message: 'Remove the focused test before committing.',
+          })),
+        ],
       },
     },
     {
