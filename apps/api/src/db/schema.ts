@@ -21,7 +21,7 @@ const timestamptz = (config?: Omit<PgTimestampConfig, 'withTimezone'>) =>
 // Users
 ////////////////////////////////////////////////////////////
 
-export const users = pgTable(
+export const usersTable = pgTable(
   'users',
   {
     id: text().primaryKey().$defaultFn(createPrefixedId('usr')),
@@ -40,18 +40,18 @@ export const users = pgTable(
   (table) => [uniqueIndex().on(table.email)],
 )
 
-export type User = typeof users.$inferSelect
+export type User = typeof usersTable.$inferSelect
 
-export const usersRelations = relations(users, ({ many }) => ({
-  sessions: many(sessions),
-  accounts: many(accounts),
+export const usersRelations = relations(usersTable, ({ many }) => ({
+  sessions: many(sessionsTable),
+  accounts: many(accountsTable),
 }))
 
 ////////////////////////////////////////////////////////////
 // Sessions
 ////////////////////////////////////////////////////////////
 
-export const sessions = pgTable(
+export const sessionsTable = pgTable(
   'sessions',
   {
     id: text().primaryKey().$defaultFn(createPrefixedId('sess')),
@@ -66,17 +66,17 @@ export const sessions = pgTable(
     userAgent: text(),
     userId: text()
       .notNull()
-      .references(() => users.id, { onDelete: 'cascade' }),
+      .references(() => usersTable.id, { onDelete: 'cascade' }),
   },
   (table) => [index().on(table.userId), uniqueIndex().on(table.token)],
 )
 
-export type Session = typeof sessions.$inferSelect
+export type Session = typeof sessionsTable.$inferSelect
 
-export const sessionsRelations = relations(sessions, ({ one }) => ({
-  user: one(users, {
-    fields: [sessions.userId],
-    references: [users.id],
+export const sessionsRelations = relations(sessionsTable, ({ one }) => ({
+  user: one(usersTable, {
+    fields: [sessionsTable.userId],
+    references: [usersTable.id],
   }),
 }))
 
@@ -84,7 +84,7 @@ export const sessionsRelations = relations(sessions, ({ one }) => ({
 // Accounts (OAuth / credential links)
 ////////////////////////////////////////////////////////////
 
-export const accounts = pgTable(
+export const accountsTable = pgTable(
   'accounts',
   {
     id: text().primaryKey().$defaultFn(createPrefixedId('acc')),
@@ -93,7 +93,7 @@ export const accounts = pgTable(
     providerId: text().notNull(),
     userId: text()
       .notNull()
-      .references(() => users.id, { onDelete: 'cascade' }),
+      .references(() => usersTable.id, { onDelete: 'cascade' }),
     accessToken: text(),
     refreshToken: text(),
     idToken: text(),
@@ -113,12 +113,12 @@ export const accounts = pgTable(
   ],
 )
 
-export type Account = typeof accounts.$inferSelect
+export type Account = typeof accountsTable.$inferSelect
 
-export const accountsRelations = relations(accounts, ({ one }) => ({
-  user: one(users, {
-    fields: [accounts.userId],
-    references: [users.id],
+export const accountsRelations = relations(accountsTable, ({ one }) => ({
+  user: one(usersTable, {
+    fields: [accountsTable.userId],
+    references: [usersTable.id],
   }),
 }))
 
@@ -126,7 +126,7 @@ export const accountsRelations = relations(accounts, ({ one }) => ({
 // Verifications (email OTP, magic links, …)
 ////////////////////////////////////////////////////////////
 
-export const verifications = pgTable(
+export const verificationsTable = pgTable(
   'verifications',
   {
     id: text().primaryKey().$defaultFn(createPrefixedId('ver')),
@@ -142,4 +142,4 @@ export const verifications = pgTable(
   (table) => [index().on(table.identifier)],
 )
 
-export type Verification = typeof verifications.$inferSelect
+export type Verification = typeof verificationsTable.$inferSelect

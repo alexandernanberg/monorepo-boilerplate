@@ -7,7 +7,12 @@ import { emailOTP } from 'better-auth/plugins/email-otp'
 import { identifyUser } from 'evlog/better-auth'
 import { config } from '~/config'
 import { db } from '~/db'
-import * as schema from '~/db/schema'
+import {
+  accountsTable,
+  sessionsTable,
+  usersTable,
+  verificationsTable,
+} from '~/db/schema'
 import { emailClient } from '~/lib/email'
 import { betterAuthLogger, useLogger } from '~/lib/logger'
 import { redisStorage } from '~/lib/redis'
@@ -32,7 +37,12 @@ export const auth = betterAuth({
   database: drizzleAdapter(db, {
     provider: 'pg',
     usePlural: true,
-    schema,
+    schema: {
+      users: usersTable,
+      sessions: sessionsTable,
+      accounts: accountsTable,
+      verifications: verificationsTable,
+    },
   }),
   // OTPs, rate limits, session cache. Session rows still live in Postgres.
   secondaryStorage: redisStorage,

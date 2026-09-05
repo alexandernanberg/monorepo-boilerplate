@@ -11,7 +11,7 @@ import {
 } from '~/__tests__/test-utils'
 import { app } from '~/app'
 import { db } from '~/db'
-import { sessions, users } from '~/db/schema'
+import { sessionsTable, usersTable } from '~/db/schema'
 import { redis } from '~/lib/redis'
 
 beforeEach(async () => {
@@ -72,15 +72,15 @@ describe('POST /auth/sign-in/email-otp', () => {
     )
     expect(res.headers.get('set-auth-token')).toBe(token)
 
-    const user = await db.query.users.findFirst({
-      where: eq(users.email, email),
+    const user = await db.query.usersTable.findFirst({
+      where: eq(usersTable.email, email),
     })
     expect(user).toBeDefined()
     expect(user!.id.startsWith('usr_')).toBe(true)
     expect(user!.name).toBe(localPart)
 
-    const session = await db.query.sessions.findFirst({
-      where: eq(sessions.userId, user!.id),
+    const session = await db.query.sessionsTable.findFirst({
+      where: eq(sessionsTable.userId, user!.id),
     })
     expect(session).toBeDefined()
     expect(session!.id.startsWith('sess_')).toBe(true)
@@ -97,8 +97,8 @@ describe('POST /auth/sign-in/email-otp', () => {
     await signIn(email)
 
     expect(
-      await db.query.users.findMany({
-        where: eq(users.email, email),
+      await db.query.usersTable.findMany({
+        where: eq(usersTable.email, email),
       }),
     ).toHaveLength(1)
   })
@@ -204,8 +204,8 @@ describe('POST /auth/sign-out', () => {
     expect(res.status).toBe(200)
 
     expect(
-      await db.query.sessions.findMany({
-        where: eq(sessions.userId, json.user.id),
+      await db.query.sessionsTable.findMany({
+        where: eq(sessionsTable.userId, json.user.id),
       }),
     ).toHaveLength(0)
 

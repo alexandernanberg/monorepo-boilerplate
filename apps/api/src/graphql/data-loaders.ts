@@ -2,7 +2,7 @@ import DataLoader from 'dataloader'
 import { inArray } from 'drizzle-orm'
 import { db } from '~/db'
 import type { User } from '~/db/schema'
-import { users } from '~/db/schema'
+import { usersTable } from '~/db/schema'
 import { ForbiddenError, NotFoundError } from '~/lib/server-error'
 import type { CurrentUser } from '~/services/user'
 
@@ -15,8 +15,8 @@ export function createDataSources(currentUser: CurrentUser | null) {
   const userLoader = new DataLoader<string, User>(async (ids) => {
     log('userLoader', ids)
 
-    const found = await db.query.users.findMany({
-      where: inArray(users.id, [...ids]),
+    const found = await db.query.usersTable.findMany({
+      where: inArray(usersTable.id, [...ids]),
     })
 
     const usersById: Record<string, User> = {}
