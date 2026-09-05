@@ -28,14 +28,13 @@
     "graphql-yoga": "^5.22.0",
     "hono": "^4.13.5",
     "ioredis": "^6.0.0",
-    "nodemailer": "^9.0.6",
+    "nodemailer": "^10.0.0",
     "pg": "^8.23.0",
     "zod": "^4.5.2"
   },
   "devDependencies": {
     "@faker-js/faker": "^10.6.0",
     "@types/node": "24.13.3",
-    "@types/nodemailer": "^8.0.1",
     "@types/pg": "^8.23.1",
     "bun-types": "^1.4.0",
     "drizzle-kit": "^0.31.10",
