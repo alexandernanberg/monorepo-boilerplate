@@ -10,25 +10,29 @@ function requiredEnv(name: string) {
 }
 
 class Config {
-  DATABASE_URL = 'postgres://postgres:postgres@localhost:5432/workout'
+  DATABASE_URL =
+    process.env['DATABASE_URL'] ??
+    'postgres://postgres:postgres@localhost:5432/app'
 
-  EMAIL_SENDER = 'noreply@acme.inc'
+  EMAIL_SENDER = process.env['EMAIL_SENDER'] ?? 'noreply@acme.inc'
 
-  SMTP_HOST = 'localhost'
-  SMTP_TLS = false
-  SMTP_PORT = 1025
-  SMTP_USER = ''
-  SMTP_PASSWORD = ''
+  SMTP_HOST = process.env['SMTP_HOST'] ?? 'localhost'
+  SMTP_TLS = process.env['SMTP_TLS'] === 'true'
+  SMTP_PORT = z.coerce.number().parse(process.env['SMTP_PORT'] ?? '1025')
+  SMTP_USER = process.env['SMTP_USER'] ?? ''
+  SMTP_PASSWORD = process.env['SMTP_PASSWORD'] ?? ''
 
-  REDIS_HOST = 'localhost'
-  REDIS_USER = ''
-  REDIS_PASSWORD = ''
-  REDIS_PORT = 6379
+  REDIS_URL = process.env['REDIS_URL'] ?? ''
+  REDIS_HOST = process.env['REDIS_HOST'] ?? 'localhost'
+  REDIS_USER = process.env['REDIS_USER'] ?? ''
+  REDIS_PASSWORD = process.env['REDIS_PASSWORD'] ?? ''
+  REDIS_PORT = z.coerce.number().parse(process.env['REDIS_PORT'] ?? '6379')
 
   // Better Auth requires 32+ characters. Override in production via env.
-  AUTH_SECRET = 'dev-only-secret-change-me-32chars!'
-  AUTH_BASE_URL = 'http://localhost:4000'
-  APP_ORIGIN = 'http://localhost:3000'
+  AUTH_SECRET =
+    process.env['BETTER_AUTH_SECRET'] ?? 'dev-only-secret-change-me-32chars!'
+  AUTH_BASE_URL = process.env['BETTER_AUTH_URL'] ?? 'http://localhost:4000'
+  APP_ORIGIN = process.env['APP_ORIGIN'] ?? 'http://localhost:3000'
 
   SESSION_TTL_DAYS = 30
   OTP_TTL_MINUTES = 15
@@ -55,7 +59,10 @@ class ProductionConfig extends Config {
   SMTP_USER = process.env['SMTP_USER'] ?? ''
   SMTP_PASSWORD = process.env['SMTP_PASSWORD'] ?? ''
 
-  REDIS_HOST = requiredEnv('REDIS_HOST')
+  REDIS_URL = process.env['REDIS_URL'] ?? ''
+  REDIS_HOST = process.env['REDIS_URL']
+    ? (process.env['REDIS_HOST'] ?? '')
+    : requiredEnv('REDIS_HOST')
   REDIS_USER = process.env['REDIS_USER'] ?? ''
   REDIS_PASSWORD = process.env['REDIS_PASSWORD'] ?? ''
   REDIS_PORT = z.coerce.number().parse(process.env['REDIS_PORT'] ?? '6379')
@@ -70,10 +77,18 @@ class ProductionConfig extends Config {
 }
 
 class TestConfig extends Config {
-  DATABASE_URL = 'postgres://postgres:postgres@localhost:5433/workout'
+  DATABASE_URL = 'postgres://postgres:postgres@127.0.0.1:5433/app'
 
+  SMTP_HOST = '127.0.0.1'
+  SMTP_TLS = false
   SMTP_PORT = 1026
+  SMTP_USER = ''
+  SMTP_PASSWORD = ''
 
+  REDIS_URL = ''
+  REDIS_HOST = '127.0.0.1'
+  REDIS_USER = ''
+  REDIS_PASSWORD = ''
   REDIS_PORT = 6380
 }
 

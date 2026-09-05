@@ -12,6 +12,14 @@ await waitFor('Redis', () => redis.ping())
 console.log('Waiting for PostgreSQL to be available...')
 await waitFor('PostgreSQL', () => client.query('SELECT 1'))
 
+console.log('Waiting for Mailpit to be available...')
+await waitFor('Mailpit', async () => {
+  const res = await fetch('http://127.0.0.1:8026/api/v1/info')
+  if (!res.ok) {
+    throw new Error(`Mailpit ${res.status}`)
+  }
+})
+
 console.log('Running database migrations...')
 await upgradeDatabase()
 
@@ -27,7 +35,12 @@ async function waitFor(label: string, cb: () => Promise<unknown>) {
   const delay = 500
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      await cb()
+      await Promise.race([
+        cb(),
+        Bun.sleep(2000).then(() => {
+          throw new Error('timed out')
+        }),
+      ])
       return
     } catch (error) {
       if (attempt === maxRetries) {

@@ -50,6 +50,7 @@ export const auth = betterAuth({
   session: {
     expiresIn: config.SESSION_TTL_DAYS * 24 * 60 * 60,
     storeSessionInDatabase: true,
+    cookieCache: { enabled: false },
   },
 
   user: {
@@ -103,7 +104,7 @@ export const auth = betterAuth({
 
   advanced: {
     ipAddress: {
-      ipAddressHeaders: ['fly-client-ip', 'x-real-ip'],
+      ipAddressHeaders: ['x-forwarded-for', 'x-real-ip'],
     },
     database: {
       joins: true,

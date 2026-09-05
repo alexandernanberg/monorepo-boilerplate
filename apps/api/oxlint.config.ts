@@ -21,12 +21,5 @@ export default defineConfig({
         'no-await-in-loop': 'off',
       },
     },
-    {
-      // Placeholder that is filled in per project.
-      files: ['seed/**'],
-      rules: {
-        'unicorn/no-empty-file': 'off',
-      },
-    },
   ],
 })

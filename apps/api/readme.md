@@ -5,8 +5,8 @@
 Authentication is [Better Auth](https://better-auth.com), mounted at `/auth`.
 Session rows live in Postgres so they can be listed and revoked. Redis holds
 OTPs, rate-limit counters, and a session cache for `getSession`. Cookie
-caching is off because this starter is Bearer-first — turn `session.cookieCache`
-on for a same-origin cookie SPA.
+caching is explicitly off (`session.cookieCache.enabled: false`) because this
+starter is Bearer-first — turn it on for a same-origin cookie SPA.
 
 The session token stored on the row is the bearer token (Better Auth does not
 hash it), so treat database access as equivalent to session theft.
@@ -46,12 +46,14 @@ Required environment:
 - `BETTER_AUTH_URL` (public API origin)
 - `APP_ORIGIN` (web app origin, CORS/CSRF)
 - `DATABASE_URL`
-- `REDIS_HOST`
+- `REDIS_URL` **or** `REDIS_HOST`
 - `EMAIL_SENDER`
 - `SMTP_HOST`
 
 Optional: `REDIS_PORT` (6379), `REDIS_USER`, `REDIS_PASSWORD`, `SMTP_PORT`
-(587), `SMTP_TLS` (`true`/`false`), `SMTP_USER`, `SMTP_PASSWORD`.
+(587), `SMTP_TLS` (`true`/`false` — STARTTLS on 587; port 465 is implicit TLS),
+`SMTP_USER`, `SMTP_PASSWORD`. Prefer `REDIS_URL` (`rediss://` for TLS) over
+host/port when the broker requires TLS.
 
 ## Logging
 
@@ -104,7 +106,7 @@ Datadog, Better Stack and others — wire one up via `initLogger({ drain })`.
 
 ## Shutdown
 
-`SIGTERM` (from Docker, Fly or Kubernetes) and `SIGINT` (Ctrl-C) start a
+`SIGTERM` (from Docker or Kubernetes) and `SIGINT` (Ctrl-C) start a
 graceful shutdown, wired up in `src/server.ts`:
 
 ```ts
@@ -121,9 +123,9 @@ same way: outside-in, so a draining request never loses something it is using.
 The whole sequence has `SHUTDOWN_TIMEOUT_SECONDS`. A hung close is raced
 against whatever time is left so the tasks behind it still run, then the
 process exits rather than waiting to be `SIGKILL`ed. Keep that budget below
-the platform's own grace period — `kill_timeout` in `fly.toml`,
-`terminationGracePeriodSeconds` on Kubernetes. A second signal exits
-immediately, which is what a second Ctrl-C expects.
+the platform's own grace period (`terminationGracePeriodSeconds` on
+Kubernetes, Docker's stop timeout). A second signal exits immediately, which
+is what a second Ctrl-C expects.
 
 The container's `CMD` execs `bun server.js` directly instead of going through
 `bun run` or `bun start`. A script runner in between is another process that

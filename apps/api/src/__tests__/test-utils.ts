@@ -15,11 +15,18 @@ class TestRequest extends Request {
     return this
   }
 
-  static json(url: string, method: string, body: unknown) {
+  static json(
+    url: string,
+    method: string,
+    body: unknown,
+    headers?: Record<string, string>,
+  ) {
     return new TestRequest(url, method, {
       headers: {
         'content-type': 'application/json',
         origin: 'http://localhost',
+        'x-forwarded-for': faker.internet.ipv4(),
+        ...headers,
       },
       body: JSON.stringify(body),
     })
@@ -82,7 +89,7 @@ interface MailpitGetMessagesResponse {
 }
 
 const mailpit = {
-  API_URL: 'http://0.0.0.0:8026/api/v1',
+  API_URL: 'http://127.0.0.1:8026/api/v1',
 
   async getMessages() {
     const res = await fetch(`${this.API_URL}/messages`)

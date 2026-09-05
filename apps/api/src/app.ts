@@ -5,14 +5,15 @@ import type { Plugin } from 'graphql-yoga'
 import { createYoga } from 'graphql-yoga'
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
-import { csrf } from 'hono/csrf'
 import { secureHeaders } from 'hono/secure-headers'
 import { config, env } from '~/config'
+import { client } from '~/db'
 import { createDataSources } from '~/graphql/data-loaders'
 import { schema } from '~/graphql/schema'
 import { auth } from '~/lib/auth'
 import type { EvlogVariables, Logger } from '~/lib/logger'
 import { useLogger } from '~/lib/logger'
+import { redis } from '~/lib/redis'
 import { NotFoundError, ServerError } from '~/lib/server-error'
 import {
   getCurrentUser,
@@ -22,8 +23,7 @@ import {
 
 const app = new Hono<EvlogVariables>()
 
-// Registered first so every downstream handler and `app.onError` can reach the
-// request logger via `ctx.get('log')`. One wide event is emitted per request.
+// First so every downstream handler and `app.onError` can use `ctx.get('log')`.
 app.use(evlog())
 
 app.use(secureHeaders())
@@ -35,9 +35,6 @@ app.use(
     exposeHeaders: ['set-auth-token'],
   }),
 )
-// Bearer and Better Auth's own origin check cover `/auth`. CSRF is for
-// cookie-authenticated browser calls to GraphQL.
-app.use('/graphql', csrf())
 
 app.onError((error, ctx) => {
   const serverError = ServerError.from(error)
@@ -47,6 +44,10 @@ app.onError((error, ctx) => {
 })
 
 app.get('/', (ctx) => ctx.text('OK'))
+app.get('/health', async (ctx) => {
+  await Promise.all([client.query('SELECT 1'), redis.ping()])
+  return ctx.text('OK')
+})
 app.notFound(() => new NotFoundError().toResponse())
 
 app.all('/auth/*', async (c) => {
@@ -86,9 +87,7 @@ const logValidationErrors: Plugin = {
 const yoga = createYoga({
   schema,
   landingPage: env === 'development',
-  // Yoga's own logger dumps errors straight to the console, unstructured and
-  // detached from the request that caused them. `maskError` below puts them on
-  // the request's wide event instead.
+  // Errors go through `maskError` onto the request event, not Yoga's logger.
   logging: false,
   plugins: [logValidationErrors],
   maskedErrors: {

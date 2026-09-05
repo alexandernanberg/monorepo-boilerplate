@@ -6,6 +6,8 @@ export default defineConfig({
   out: 'migrations',
   casing: 'snake_case',
   dbCredentials: {
-    url: 'postgres://postgres:postgres@localhost:5432/workout',
+    url:
+      process.env['DATABASE_URL'] ??
+      'postgres://postgres:postgres@localhost:5432/app',
   },
 })

@@ -127,29 +127,37 @@ describe('POST /auth/sign-in/email-otp', () => {
     const email = faker.internet.email().toLowerCase()
     await sendOtp(email)
 
+    const ip = faker.internet.ipv4()
+    const requestEnv = getRequestEnv(ip)
+    const headers = { 'x-forwarded-for': ip }
+
     for (let i = 0; i < 3; i++) {
-      await app.fetch(
-        TestRequest.json('/auth/sign-in/email-otp', 'POST', {
-          email,
-          otp: `0000000${i}`,
-        }),
-        getRequestEnv(),
+      const failed = await app.fetch(
+        TestRequest.json(
+          '/auth/sign-in/email-otp',
+          'POST',
+          { email, otp: `0000000${i}` },
+          headers,
+        ),
+        requestEnv,
       )
-      await redis.flushall()
+      expect(failed.status).toBe(400)
     }
 
     const res = await app.fetch(
-      TestRequest.json('/auth/sign-in/email-otp', 'POST', {
-        email,
-        otp: '00000003',
-      }),
-      getRequestEnv(),
+      TestRequest.json(
+        '/auth/sign-in/email-otp',
+        'POST',
+        { email, otp: '00000003' },
+        headers,
+      ),
+      requestEnv,
     )
 
-    expect(res.status).toBeGreaterThanOrEqual(400)
+    expect(res.status).toBe(403)
     expect(await res.json()).toEqual(
       expect.objectContaining({
-        code: expect.stringMatching(/TOO_MANY_ATTEMPTS|INVALID_OTP/),
+        code: 'TOO_MANY_ATTEMPTS',
       }),
     )
   })

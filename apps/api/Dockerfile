@@ -57,13 +57,14 @@ ENV NODE_ENV=production
 WORKDIR /app
 
 COPY --from=builder --chown=bun:bun /app/apps/api/dist ./
+COPY --from=builder --chown=bun:bun /app/apps/api/migrations ./migrations
 
 USER bun
 
 EXPOSE 4000
 
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD ["bun", "-e", "const r = await fetch('http://127.0.0.1:' + (process.env.PORT || 4000) + '/'); if (!r.ok) process.exit(1)"]
+HEALTHCHECK --interval=30s --timeout=3s --start-period=30s --retries=3 \
+  CMD ["bun", "-e", "const r = await fetch('http://127.0.0.1:' + (process.env.PORT || 4000) + '/health'); if (!r.ok) process.exit(1)"]
 
 # Exec the server as PID 1 so SIGTERM reaches the process holding the
 # connections. `bun run` / `bun start` insert a script runner that would

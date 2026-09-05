@@ -2,7 +2,7 @@ services:
   db_test:
     image: postgres:17-alpine
     environment:
-      POSTGRES_DB: workout
+      POSTGRES_DB: app
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
     ports:

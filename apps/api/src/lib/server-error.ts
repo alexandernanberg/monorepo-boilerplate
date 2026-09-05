@@ -52,9 +52,26 @@ class ServerError extends Error {
     }
 
     if (error instanceof HTTPException) {
-      switch (error.status) {
-        case 403:
-          return new ForbiddenError()
+      if (error.status >= 400 && error.status < 500) {
+        const message = error.message || undefined
+        switch (error.status) {
+          case 400:
+            return new BadRequestError(message)
+          case 401:
+            return new UnauthorizedError(message)
+          case 403:
+            return new ForbiddenError(message)
+          case 404:
+            return new NotFoundError(message)
+          case 409:
+            return new ConflictError(message)
+          default:
+            return new ServerError(
+              error.status,
+              'HTTP_ERROR',
+              message ?? 'Request failed',
+            )
+        }
       }
     }
 

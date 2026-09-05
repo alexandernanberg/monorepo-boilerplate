@@ -6,6 +6,11 @@ node_modules
 # macos
 .DS_Store
 
+# secrets
+.env
+.env.*
+!.env.example
+
 # build
 out
 build

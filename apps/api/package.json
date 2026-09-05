@@ -7,18 +7,17 @@
     "dev": "bun run --hot src/server.ts",
     "build": "bun build src/server.ts --target bun --outdir ./dist",
     "start": "NODE_ENV=production bun dist/server.js",
-    "test": "bun test --preload ./src/__tests__/setup-tests.ts",
+    "test": "NODE_ENV=test bun test --preload ./src/__tests__/setup-tests.ts",
     "lint": "oxlint .",
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
-    "db:seed": "bun run seed/seed-db.ts"
+    "db:migrate": "bun src/db/migrate.ts"
   },
   "dependencies": {
     "@better-auth/drizzle-adapter": "1.7.2",
     "@paralleldrive/cuid2": "^3.3.0",
     "@pothos/core": "^4.13.1",
-    "@pothos/plugin-dataloader": "^4.4.5",
     "@pothos/plugin-relay": "^4.7.1",
     "better-auth": "1.7.2",
     "dataloader": "^2.2.3",

@@ -1,13 +1,27 @@
 import type { SecondaryStorage } from 'better-auth'
+import { log } from 'evlog'
 import Redis from 'ioredis'
 import { config, env } from '~/config'
 
-const redis = new Redis({
-  host: config.REDIS_HOST,
-  username: config.REDIS_USER,
-  password: config.REDIS_PASSWORD,
-  port: config.REDIS_PORT,
+const redisOptions = {
   lazyConnect: env === 'test',
+  connectTimeout: env === 'test' ? 1000 : undefined,
+  maxRetriesPerRequest: env === 'test' ? 1 : undefined,
+  retryStrategy: env === 'test' ? () => null : undefined,
+}
+
+const redis = config.REDIS_URL
+  ? new Redis(config.REDIS_URL, redisOptions)
+  : new Redis({
+      host: config.REDIS_HOST,
+      username: config.REDIS_USER || undefined,
+      password: config.REDIS_PASSWORD || undefined,
+      port: config.REDIS_PORT,
+      ...redisOptions,
+    })
+
+redis.on('error', (error) => {
+  log.error('redis', error.message)
 })
 
 const redisStorage: SecondaryStorage = {
