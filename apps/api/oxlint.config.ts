@@ -6,6 +6,12 @@ export default defineConfig({
 
   ignorePatterns: ['migrations'],
 
+  rules: {
+    // Better Auth hooks (and similar adapters) are typed as `Promise<…>` with
+    // nothing to await. Prefer `async` + `return` over `Promise.resolve()`.
+    'typescript/require-await': 'off',
+  },
+
   overrides: [
     {
       // Tests intentionally issue requests sequentially, e.g. to exhaust a

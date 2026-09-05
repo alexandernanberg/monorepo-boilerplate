@@ -3,13 +3,17 @@
 ## Auth
 
 Authentication is [Better Auth](https://better-auth.com), mounted at `/auth`.
-Sessions are rows in Postgres — every `getSession` hits the database. Cookie
-caching is off on purpose. Redis holds OTPs and rate-limit counters only.
+Session rows live in Postgres so they can be listed and revoked. Redis holds
+OTPs, rate-limit counters, and a session cache for `getSession`. Cookie
+caching is off because this starter is Bearer-first — turn `session.cookieCache`
+on for a same-origin cookie SPA.
+
 The session token stored on the row is the bearer token (Better Auth does not
 hash it), so treat database access as equivalent to session theft.
 
-The current sign-in method is email OTP (passwordless). Passkeys, SSO and 2FA
-are plugins you add to `src/lib/auth.ts` when an app needs them.
+The current sign-in method is email OTP (passwordless). First successful OTP
+for an email creates the user. Add Better Auth plugins in `src/lib/auth.ts`
+when a project needs passkeys, magic links, 2FA, or orgs.
 
 ### Email OTP
 
@@ -31,7 +35,8 @@ POST /auth/sign-out
 ```
 
 `GET /auth/get-session` follows Better Auth: a missing or invalid token is
-`200` with a `null` body. GraphQL requires a session and answers `401`.
+`200` with a `null` body. GraphQL is the same idea — `viewer` is `null`
+when there is no session. Field resolvers decide what actually needs a user.
 
 ### Production
 
@@ -75,6 +80,10 @@ Errors are recorded centrally, so handlers only need to throw:
 - Yoga's `maskError` does the same for GraphQL. Yoga's own logger is turned off
   (`logging: false`) — it dumped errors to the console unstructured and detached
   from the request that caused them.
+- Better Auth is the same: its logger is piped into evlog, and `/auth/*`
+  4xx/5xx are copied onto the request event (BA returns a `Response`, so they
+  never reach `app.onError`). A session is identified with
+  `identifyUser` from `evlog/better-auth`.
 - Parse and validation failures are the client's mistake, not ours. They are
   returned to the client as-is and recorded as warnings. Validation errors never
   reach `maskError`, so a small `onValidate` plugin catches those.

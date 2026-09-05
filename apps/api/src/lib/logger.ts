@@ -1,5 +1,5 @@
 import type { AuditableLogger } from 'evlog'
-import { initLogger } from 'evlog'
+import { initLogger, log } from 'evlog'
 import type { EvlogVariables } from 'evlog/hono'
 import { useLogger } from 'evlog/hono'
 import { env } from '~/config'
@@ -33,5 +33,58 @@ initLogger({
 /** The per-request logger, as returned by `ctx.get('log')` and `useLogger()`. */
 type Logger = AuditableLogger
 
+/**
+ * `useLogger()` throws when there is no request ALS (startup, shutdown,
+ * Better Auth internals). Prefer this at those boundaries.
+ */
+function tryUseLogger(): Logger | null {
+  try {
+    return useLogger()
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Better Auth's default logger writes `[Better Auth]: …` to the console.
+ * Same reason Yoga is `logging: false` — attach to the request event when
+ * there is one, otherwise emit a tagged process log.
+ */
+const betterAuthLogger = {
+  level: 'warn' as const,
+  log(level: 'debug' | 'info' | 'warn' | 'error', message: string) {
+    const reqLog = tryUseLogger()
+    switch (level) {
+      case 'error':
+        if (reqLog) {
+          reqLog.error(message)
+        } else {
+          log.error('auth', message)
+        }
+        return
+      case 'warn':
+        if (reqLog) {
+          reqLog.warn(message)
+        } else {
+          log.warn('auth', message)
+        }
+        return
+      case 'debug':
+        if (reqLog) {
+          reqLog.info(message)
+        } else {
+          log.debug('auth', message)
+        }
+        return
+      case 'info':
+        if (reqLog) {
+          reqLog.info(message)
+        } else {
+          log.info('auth', message)
+        }
+    }
+  },
+}
+
 export type { EvlogVariables, Logger }
-export { useLogger }
+export { betterAuthLogger, tryUseLogger, useLogger }

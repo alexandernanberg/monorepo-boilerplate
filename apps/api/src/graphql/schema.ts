@@ -37,6 +37,7 @@ builder.queryType({
   fields: (t) => ({
     viewer: t.field({
       type: User,
+      nullable: true,
       resolve: (root, parent, ctx) => ctx.currentUser,
     }),
   }),

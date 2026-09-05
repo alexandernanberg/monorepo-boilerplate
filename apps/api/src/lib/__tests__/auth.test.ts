@@ -241,7 +241,7 @@ describe('GraphQL viewer', () => {
     })
   })
 
-  test('rejects unauthenticated requests', async () => {
+  test('returns null when unauthenticated', async () => {
     const res = await app.fetch(
       TestRequest.json('/graphql', 'POST', {
         query: '{ viewer { email } }',
@@ -249,16 +249,13 @@ describe('GraphQL viewer', () => {
       getRequestEnv(),
     )
 
-    const json = await res.json()
-    expect(res.status).toBe(401)
-    expect(json).toEqual(
-      expect.objectContaining({
-        code: 'UNAUTHORIZED',
-      }),
-    )
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({
+      data: { viewer: null },
+    })
   })
 
-  test('rejects a revoked session', async () => {
+  test('returns null after the session is revoked', async () => {
     const email = faker.internet.email().toLowerCase()
     const { token } = await signIn(email)
 
@@ -274,7 +271,10 @@ describe('GraphQL viewer', () => {
       getRequestEnv(),
     )
 
-    expect(res.status).toBe(401)
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({
+      data: { viewer: null },
+    })
   })
 })
 

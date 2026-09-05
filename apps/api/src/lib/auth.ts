@@ -1,13 +1,16 @@
 import { drizzleAdapter } from '@better-auth/drizzle-adapter'
 import { init } from '@paralleldrive/cuid2'
 import { betterAuth } from 'better-auth'
+import { createAuthMiddleware } from 'better-auth/api'
 import { bearer } from 'better-auth/plugins'
 import { emailOTP } from 'better-auth/plugins/email-otp'
-import { config, env } from '~/config'
+import { identifyUser } from 'evlog/better-auth'
+import { config } from '~/config'
 import { db } from '~/db'
 import * as schema from '~/db/schema'
 import { emailClient } from '~/lib/email'
-import { redis } from '~/lib/redis'
+import { betterAuthLogger, useLogger } from '~/lib/logger'
+import { redisStorage } from '~/lib/redis'
 
 const createId = init({ length: 32 })
 
@@ -16,11 +19,6 @@ const idPrefix: Record<string, string> = {
   session: 'sess',
   account: 'acc',
   verification: 'ver',
-  twoFactor: '2fa',
-  passkey: 'pk',
-  organization: 'org',
-  member: 'mem',
-  invitation: 'inv',
 }
 
 export const auth = betterAuth({
@@ -29,87 +27,66 @@ export const auth = betterAuth({
   baseURL: config.AUTH_BASE_URL,
   basePath: '/auth',
   trustedOrigins: config.trustedOrigins,
+  logger: betterAuthLogger,
 
   database: drizzleAdapter(db, {
     provider: 'pg',
     usePlural: true,
     schema,
   }),
-
-  // Redis holds OTPs and rate-limit counters. Sessions stay in Postgres so
-  // they can be listed and revoked with a normal query.
-  secondaryStorage: {
-    get: (key) => redis.get(key),
-    getAndDelete: (key) => redis.getdel(key),
-    async increment(key, ttl) {
-      const results = await redis
-        .multi()
-        .incr(key)
-        .expire(key, ttl, 'NX')
-        .exec()
-      const value = results?.[0]?.[1]
-      if (typeof value !== 'number') {
-        throw new Error('Redis increment failed')
-      }
-      return value
-    },
-    async set(key, value, ttl) {
-      if (ttl) {
-        await redis.set(key, value, 'EX', ttl)
-      } else {
-        await redis.set(key, value)
-      }
-    },
-    async delete(key) {
-      await redis.del(key)
-    },
-  },
+  // OTPs, rate limits, session cache. Session rows still live in Postgres.
+  secondaryStorage: redisStorage,
 
   session: {
     expiresIn: config.SESSION_TTL_DAYS * 24 * 60 * 60,
-    updateAge: 24 * 60 * 60,
-    cookieCache: {
-      enabled: false,
-    },
     storeSessionInDatabase: true,
   },
 
   user: {
     additionalFields: {
-      givenName: {
-        type: 'string',
-        required: false,
-      },
-      familyName: {
-        type: 'string',
-        required: false,
-      },
+      givenName: { type: 'string', required: false },
+      familyName: { type: 'string', required: false },
     },
-  },
-
-  emailAndPassword: {
-    enabled: false,
   },
 
   rateLimit: {
     enabled: true,
-    storage: 'secondary-storage',
     window: 60,
     max: 100,
+    customRules: {
+      '/email-otp/send-verification-otp': { window: 60, max: 5 },
+      '/sign-in/email-otp': { window: 60, max: 10 },
+    },
+  },
+
+  hooks: {
+    after: createAuthMiddleware(async (ctx) => {
+      // `auth.api.*` (GraphQL's getSession) runs this hook too. Only stamp
+      // auth fields when the HTTP request is actually `/auth/*`.
+      const path = ctx.request && new URL(ctx.request.url).pathname
+      if (!path?.startsWith('/auth')) {
+        return
+      }
+
+      const reqLog = useLogger()
+      reqLog.set({ auth: { path: ctx.path } })
+
+      const session = ctx.context.newSession ?? ctx.context.session
+      if (session) {
+        identifyUser(reqLog, session)
+      }
+    }),
   },
 
   databaseHooks: {
     user: {
       create: {
-        before: (user) =>
-          Promise.resolve({
-            data: {
-              ...user,
-              name: user.name.trim()
-                ? user.name
-                : (user.email.split('@')[0] ?? user.email),
-            },
-          }),
+        before: async (user) => ({
+          data: {
+            ...user,
+            name: user.name.trim() || user.email.split('@')[0] || user.email,
+          },
+        }),
       },
     },
   },
@@ -121,7 +98,7 @@ export const auth = betterAuth({
     database: {
       joins: true,
       generateId: ({ model }) => {
-        const prefix = idPrefix[model] ?? model.slice(0, 3).toLowerCase()
+        const prefix = idPrefix[model] ?? model.slice(0, 3)
         return `${prefix}_${createId()}`
       },
     },
@@ -134,20 +111,14 @@ export const auth = betterAuth({
       expiresIn: config.OTP_TTL_MINUTES * 60,
       allowedAttempts: config.OTP_MAX_ATTEMPTS,
       storeOTP: 'hashed',
-      sendVerificationOTP({ email, otp }) {
-        return emailClient
-          .sendMail({
-            to: email,
-            from: config.EMAIL_SENDER,
-            subject: 'Your login code',
-            text: `Your login code is: ${otp}. The code is valid for ${config.OTP_TTL_MINUTES} minutes.`,
-          })
-          .then(() => undefined)
+      async sendVerificationOTP({ email, otp }) {
+        await emailClient.sendMail({
+          to: email,
+          from: config.EMAIL_SENDER,
+          subject: 'Your login code',
+          text: `Your login code is: ${otp}. The code is valid for ${config.OTP_TTL_MINUTES} minutes.`,
+        })
       },
     }),
   ],
-
-  telemetry: {
-    enabled: env === 'production',
-  },
 })

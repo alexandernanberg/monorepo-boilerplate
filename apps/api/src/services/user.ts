@@ -1,32 +1,26 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { auth } from '~/lib/auth'
-import { ServerError } from '~/lib/server-error'
 
 export type CurrentUser = NonNullable<
   Awaited<ReturnType<typeof auth.api.getSession>>
 >['user']
 
-const currentUserStore = new AsyncLocalStorage<CurrentUser>()
+type Store = { user: CurrentUser | null }
 
-function runWithCurrentUser<T>(user: CurrentUser, fn: () => T): T {
-  return currentUserStore.run(user, fn)
+const currentUserStore = new AsyncLocalStorage<Store>()
+
+function runWithCurrentUser<T>(user: CurrentUser | null, fn: () => T): T {
+  return currentUserStore.run({ user }, fn)
 }
 
-async function getCurrentUser(req: Request) {
-  const fromStore = currentUserStore.getStore()
-  if (fromStore) {
-    return fromStore
-  }
+function getCurrentUser() {
+  return currentUserStore.getStore()?.user ?? null
+}
 
-  const result = await auth.api.getSession({
+async function resolveSession(req: Request) {
+  return await auth.api.getSession({
     headers: req.headers,
   })
-
-  if (!result?.user) {
-    throw new ServerError(401, 'UNAUTHORIZED', 'Missing authorization')
-  }
-
-  return result.user
 }
 
-export { getCurrentUser, runWithCurrentUser }
+export { getCurrentUser, resolveSession, runWithCurrentUser }

@@ -11,7 +11,7 @@ function log(...data: Array<unknown>) {
   if (DEBUG) console.log(...data)
 }
 
-export function createDataSources(currentUser: CurrentUser) {
+export function createDataSources(currentUser: CurrentUser | null) {
   const userLoader = new DataLoader<string, User>(async (ids) => {
     log('userLoader', ids)
 
@@ -27,11 +27,13 @@ export function createDataSources(currentUser: CurrentUser) {
     return ids.map((id) => usersById[id] ?? new Error(`User not found "${id}"`))
   })
 
-  userLoader.prime(currentUser.id, currentUser as User)
+  if (currentUser) {
+    userLoader.prime(currentUser.id, currentUser as User)
+  }
 
   return {
     async loadUserById(id: string) {
-      if (currentUser.id !== id) {
+      if (!currentUser || currentUser.id !== id) {
         throw new ForbiddenError('Forbidden')
       }
 
