@@ -5,10 +5,10 @@ import { builder } from './builder'
 // User
 ///////////////////////////////////////////////////////////
 
-type UserType = Pick<
-  DbUser,
-  'id' | 'email' | 'givenName' | 'familyName' | 'createdAt'
->
+type UserType = Pick<DbUser, 'id' | 'email' | 'name' | 'createdAt'> & {
+  givenName?: string | null
+  familyName?: string | null
+}
 
 const UserRef = builder.objectRef<UserType>('User')
 
@@ -21,8 +21,9 @@ export const User = builder.node(UserRef, {
 
   fields: (t) => ({
     databaseId: t.exposeID('id'),
-    givenName: t.exposeString('givenName'),
-    familyName: t.exposeString('familyName'),
+    name: t.exposeString('name', { nullable: false }),
+    givenName: t.exposeString('givenName', { nullable: true }),
+    familyName: t.exposeString('familyName', { nullable: true }),
     createdAt: t.expose('createdAt', { type: 'DateTime' }),
     email: t.exposeString('email', { nullable: false }),
   }),

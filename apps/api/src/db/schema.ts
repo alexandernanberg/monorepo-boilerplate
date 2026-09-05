@@ -4,8 +4,6 @@ import type { PgTimestampConfig } from 'drizzle-orm/pg-core'
 import {
   boolean,
   index,
-  inet,
-  integer,
   pgTable,
   text,
   timestamp,
@@ -16,8 +14,6 @@ const createId = init({ length: 32 })
 
 const createPrefixedId = (prefix: string) => () => `${prefix}_${createId()}`
 
-const cuid = () => text()
-
 const timestamptz = (config?: Omit<PgTimestampConfig, 'withTimezone'>) =>
   timestamp({ withTimezone: true, ...config })
 
@@ -25,124 +21,125 @@ const timestamptz = (config?: Omit<PgTimestampConfig, 'withTimezone'>) =>
 // Users
 ////////////////////////////////////////////////////////////
 
-export const usersTable = pgTable(
+export const users = pgTable(
   'users',
   {
-    id: cuid().primaryKey().$default(createPrefixedId('usr')),
-    createdAt: timestamptz().notNull().defaultNow(),
-    updatedAt: timestamptz().notNull().defaultNow(),
-    deletedAt: timestamptz(),
-    givenName: text(),
-    familyName: text(),
+    id: text().primaryKey().$defaultFn(createPrefixedId('usr')),
+    name: text().notNull(),
     email: text().notNull(),
     emailVerified: boolean().notNull().default(false),
+    image: text(),
+    givenName: text(),
+    familyName: text(),
+    createdAt: timestamptz().notNull().defaultNow(),
+    updatedAt: timestamptz()
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
   },
   (table) => [uniqueIndex().on(table.email)],
 )
 
-export type User = typeof usersTable.$inferSelect
+export type User = typeof users.$inferSelect
 
-export const usersRelations = relations(usersTable, ({ many }) => ({
-  sessions: many(sessionsTable),
+export const usersRelations = relations(users, ({ many }) => ({
+  sessions: many(sessions),
+  accounts: many(accounts),
 }))
-
-////////////////////////////////////////////////////////////
-// Email change requests
-////////////////////////////////////////////////////////////
-
-export const emailChangeRequestsTable = pgTable(
-  'email_change_requests',
-  {
-    id: cuid().primaryKey().$default(createPrefixedId('ecr')),
-    createdAt: timestamptz().notNull().defaultNow(),
-    expiresAt: timestamptz().notNull(),
-    verifiedAt: timestamptz(),
-    userId: cuid()
-      .notNull()
-      .references(() => usersTable.id, { onDelete: 'cascade' }),
-    oldEmail: text().notNull(),
-    newEmail: text().notNull(),
-    codeHash: text().notNull(),
-    ipAddress: inet().notNull(),
-    userAgent: text().notNull(),
-  },
-  (table) => [index().on(table.newEmail), index().on(table.userId)],
-)
-
-export type EmailChangeRequest = typeof emailChangeRequestsTable.$inferSelect
-
-////////////////////////////////////////////////////////////
-// Signup challenges
-////////////////////////////////////////////////////////////
-
-export const signupChallengesTable = pgTable(
-  'signup_challenges',
-  {
-    id: cuid().primaryKey().$default(createPrefixedId('sgc')),
-    createdAt: timestamptz().notNull().defaultNow(),
-    expiresAt: timestamptz().notNull(),
-    codeHash: text().notNull(),
-    failedAttempts: integer().notNull().default(0),
-    email: text().notNull(),
-    ipAddress: inet().notNull(),
-    userAgent: text().notNull(),
-  },
-  (table) => [uniqueIndex().on(table.email)],
-)
-
-export type SignupChallenge = typeof signupChallengesTable.$inferSelect
-
-////////////////////////////////////////////////////////////
-// Login challenges
-////////////////////////////////////////////////////////////
-
-export const loginChallengesTable = pgTable(
-  'login_challenges',
-  {
-    id: cuid().primaryKey().$default(createPrefixedId('lgc')),
-    createdAt: timestamptz().notNull().defaultNow(),
-    expiresAt: timestamptz().notNull(),
-    codeHash: text().notNull(),
-    failedAttempts: integer().notNull().default(0),
-    userId: cuid()
-      .notNull()
-      .references(() => usersTable.id, { onDelete: 'cascade' }),
-    ipAddress: inet().notNull(),
-    userAgent: text().notNull(),
-  },
-  (table) => [index().on(table.userId)],
-)
-
-export type LoginChallenge = typeof loginChallengesTable.$inferSelect
 
 ////////////////////////////////////////////////////////////
 // Sessions
 ////////////////////////////////////////////////////////////
 
-export const sessionsTable = pgTable(
+export const sessions = pgTable(
   'sessions',
   {
-    id: cuid().primaryKey().$default(createPrefixedId('sess')),
-    createdAt: timestamptz().notNull().defaultNow(),
+    id: text().primaryKey().$defaultFn(createPrefixedId('sess')),
     expiresAt: timestamptz().notNull(),
-    revokedAt: timestamptz(),
-    lastActiveAt: timestamptz().notNull().defaultNow(),
-    userId: cuid()
+    token: text().notNull(),
+    createdAt: timestamptz().notNull().defaultNow(),
+    updatedAt: timestamptz()
       .notNull()
-      .references(() => usersTable.id, { onDelete: 'cascade' }),
-    tokenHash: text().notNull(),
-    ipAddress: inet().notNull(),
-    userAgent: text().notNull(),
-    // TODO: sudo mode, lastVerifiedAt (when the session was last verified by mfa)
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+    ipAddress: text(),
+    userAgent: text(),
+    userId: text()
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
   },
-  (table) => [index().on(table.userId), uniqueIndex().on(table.tokenHash)],
+  (table) => [index().on(table.userId), uniqueIndex().on(table.token)],
 )
 
-export type Session = typeof sessionsTable.$inferSelect
+export type Session = typeof sessions.$inferSelect
 
-export const sessionsRelations = relations(sessionsTable, ({ one }) => ({
-  user: one(usersTable, {
-    fields: [sessionsTable.userId],
-    references: [usersTable.id],
+export const sessionsRelations = relations(sessions, ({ one }) => ({
+  user: one(users, {
+    fields: [sessions.userId],
+    references: [users.id],
   }),
 }))
+
+////////////////////////////////////////////////////////////
+// Accounts (OAuth / credential links)
+////////////////////////////////////////////////////////////
+
+export const accounts = pgTable(
+  'accounts',
+  {
+    id: text().primaryKey().$defaultFn(createPrefixedId('acc')),
+    issuer: text().notNull(),
+    accountId: text().notNull(),
+    providerId: text().notNull(),
+    userId: text()
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    accessToken: text(),
+    refreshToken: text(),
+    idToken: text(),
+    accessTokenExpiresAt: timestamptz(),
+    refreshTokenExpiresAt: timestamptz(),
+    scope: text(),
+    password: text(),
+    createdAt: timestamptz().notNull().defaultNow(),
+    updatedAt: timestamptz()
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex().on(table.issuer, table.accountId),
+    index().on(table.userId),
+  ],
+)
+
+export type Account = typeof accounts.$inferSelect
+
+export const accountsRelations = relations(accounts, ({ one }) => ({
+  user: one(users, {
+    fields: [accounts.userId],
+    references: [users.id],
+  }),
+}))
+
+////////////////////////////////////////////////////////////
+// Verifications (email OTP, magic links, …)
+////////////////////////////////////////////////////////////
+
+export const verifications = pgTable(
+  'verifications',
+  {
+    id: text().primaryKey().$defaultFn(createPrefixedId('ver')),
+    identifier: text().notNull(),
+    value: text().notNull(),
+    expiresAt: timestamptz().notNull(),
+    createdAt: timestamptz().notNull().defaultNow(),
+    updatedAt: timestamptz()
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [index().on(table.identifier)],
+)
+
+export type Verification = typeof verifications.$inferSelect

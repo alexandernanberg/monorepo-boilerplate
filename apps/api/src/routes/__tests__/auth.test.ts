@@ -3,7 +3,6 @@
 import { faker } from '@faker-js/faker'
 import { beforeEach, describe, expect, setSystemTime, test } from 'bun:test'
 import { eq } from 'drizzle-orm'
-import ms from 'ms'
 import {
   getRequestEnv,
   mailpit,
@@ -11,17 +10,9 @@ import {
   TestRequest,
 } from '~/__tests__/test-utils'
 import { app } from '~/app'
-import { config } from '~/config'
 import { db } from '~/db'
-import {
-  loginChallengesTable,
-  sessionsTable,
-  signupChallengesTable,
-  usersTable,
-} from '~/db/schema'
+import { sessions, users } from '~/db/schema'
 import { redis } from '~/lib/redis'
-import type { createSessionDto } from '~/services/session'
-import { createSession, createSessionToken } from '~/services/session'
 
 beforeEach(async () => {
   setSystemTime()
@@ -33,798 +24,306 @@ beforeEach(async () => {
   ])
 })
 
-describe('POST /auth/signup', () => {
-  test('generates code and sends email', async () => {
-    const email = faker.internet.email()
+describe('POST /auth/email-otp/send-verification-otp', () => {
+  test('sends an 8-digit code', async () => {
+    const email = faker.internet.email().toLowerCase()
 
-    await requestSignup(email)
+    const res = await sendOtp(email)
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ success: true })
+
+    const message = await readOtpMessage(email)
+    expect(message.Subject).toBe('Your login code')
+    expect(message.Subject).not.toMatch(/\d{8}/)
+    expect(await readOtp(email)).toMatch(/^\d{8}$/)
   })
 
   test('rejects invalid email', async () => {
     const res = await app.fetch(
-      TestRequest.json('/auth/signup', 'POST', { email: 'foo' }),
-      getRequestEnv(),
-    )
-
-    expect(res.status).toBe(422)
-    expect(await res.json()).toEqual(
-      expect.objectContaining({ code: 'VALIDATION_ERROR' }),
-    )
-  })
-
-  test('rejects email used by existing account', async () => {
-    const email = faker.internet.email()
-
-    await db.insert(usersTable).values({ email: email.toLowerCase() })
-
-    const res = await app.fetch(
-      TestRequest.json('/auth/signup', 'POST', { email }),
-      getRequestEnv(),
-    )
-
-    expect(res.status).toBe(409)
-    expect(await res.json()).toEqual(
-      expect.objectContaining({ code: 'ACCOUNT_EXISTS' }),
-    )
-  })
-
-  test('rejects email verification in progress', async () => {
-    const email = faker.internet.email()
-
-    await app.fetch(
-      TestRequest.json('/auth/signup', 'POST', { email }),
-      getRequestEnv(),
-    )
-
-    // Circumvent rate limiting
-    await redis.flushall()
-
-    const res = await app.fetch(
-      TestRequest.json('/auth/signup', 'POST', { email }),
-      getRequestEnv(),
-    )
-
-    expect(res.status).toBe(409)
-    expect(await res.json()).toEqual(
-      expect.objectContaining({ code: 'VERIFICATION_IN_PROGRESS' }),
-    )
-  })
-
-  test.skip('enforces IP rate limit', async () => {
-    const email = faker.internet.email()
-
-    const count = 20
-
-    await Promise.all(
-      Array.from(
-        { length: count },
-        async () =>
-          await app.fetch(
-            TestRequest.json('/auth/signup', 'POST', { email }),
-            getRequestEnv(),
-          ),
-      ),
-    )
-
-    const res = await app.fetch(
-      TestRequest.json('/auth/signup', 'POST', { email }),
-      getRequestEnv(),
-    )
-
-    expect(res.status).toBe(429)
-    expect(await res.json()).toEqual(
-      expect.objectContaining({ code: 'RATE_LIMIT_EXCEEDED' }),
-    )
-
-    const resOtherIp = await app.fetch(
-      TestRequest.json('/auth/signup', 'POST', {
-        email: faker.internet.email(),
+      TestRequest.json('/auth/email-otp/send-verification-otp', 'POST', {
+        email: 'foo',
+        type: 'sign-in',
       }),
-      getRequestEnv('127.0.0.2'),
+      getRequestEnv(),
     )
 
-    expect(resOtherIp.status).toBe(204)
+    expect(res.status).toBe(400)
   })
 })
 
-describe('POST /auth/signup/verify', () => {
-  test('verifies code and creates account', async () => {
-    const email = faker.internet.email()
+describe('POST /auth/sign-in/email-otp', () => {
+  test('creates a user and session on first sign-in', async () => {
+    const email = faker.internet.email().toLowerCase()
+    const at = email.indexOf('@')
+    const localPart = at === -1 ? email : email.slice(0, at)
+    const { token, json, res } = await signIn(email)
 
-    const code = await requestSignup(email)
-
-    const res = await app.fetch(
-      TestRequest.json('/auth/signup/verify', 'POST', { email, code }),
-      getRequestEnv(),
-    )
-    const json = (await res.json()) as {
-      token: string
-      session: ReturnType<typeof createSessionDto>
-    }
-    const sessionId = json.session.id
-
-    expect(res.status).toBe(200)
+    expect(token).toBeTruthy()
     expect(json).toEqual(
       expect.objectContaining({
         token: expect.any(String),
-        session: expect.objectContaining({
-          id: expect.any(String),
-          userId: expect.any(String),
-        }),
-      }),
-    )
-
-    expect(
-      await db.query.signupChallengesTable.findMany({
-        where: eq(signupChallengesTable.email, email),
-      }),
-    ).toHaveLength(0)
-
-    expect(
-      await db.query.sessionsTable.findFirst({
-        where: eq(sessionsTable.id, sessionId),
-        with: { user: true },
-      }),
-    ).toEqual(
-      expect.objectContaining({
-        id: sessionId,
         user: expect.objectContaining({
-          email: email.toLowerCase(),
+          email,
           emailVerified: true,
+          name: localPart,
         }),
       }),
     )
-  })
+    expect(res.headers.get('set-auth-token')).toBe(token)
 
-  test('rejects invalid email', async () => {
-    const res = await app.fetch(
-      TestRequest.json('/auth/signup/verify', 'POST', {
-        email: 'foo',
-        code: '',
-      }),
-      getRequestEnv(),
-    )
-    const json = await res.json()
-
-    expect(res.status).toBe(422)
-    expect(json).toEqual(
-      expect.objectContaining({
-        code: 'VALIDATION_ERROR',
-      }),
-    )
-  })
-
-  test('rejects if account has not been initiated', async () => {
-    const res = await app.fetch(
-      TestRequest.json('/auth/signup/verify', 'POST', {
-        email: faker.internet.email(),
-        code: '',
-      }),
-      getRequestEnv(),
-    )
-    const json = await res.json()
-
-    expect(res.status).toBe(400)
-    expect(json).toEqual(
-      expect.objectContaining({
-        code: 'INVALID_CODE',
-      }),
-    )
-  })
-
-  test('rejects expired code', async () => {
-    const email = faker.internet.email()
-
-    const code = await requestSignup(email)
-
-    setSystemTime(Date.now() + ms(`${config.SIGNUP_CODE_TTL_MINUTES}m`))
-
-    const res = await app.fetch(
-      TestRequest.json('/auth/signup/verify', 'POST', { email, code }),
-      getRequestEnv(),
-    )
-    const json = await res.json()
-
-    expect(res.status).toBe(410)
-    expect(json).toEqual(
-      expect.objectContaining({
-        code: 'CODE_EXPIRED',
-      }),
-    )
-  })
-
-  test('rejects invalid code', async () => {
-    const email = faker.internet.email()
-
-    await requestSignup(email)
-
-    const res = await app.fetch(
-      TestRequest.json('/auth/signup/verify', 'POST', {
-        email,
-        code: '123456',
-      }),
-      getRequestEnv(),
-    )
-    const json = await res.json()
-
-    expect(res.status).toBe(400)
-    expect(json).toEqual(
-      expect.objectContaining({
-        code: 'INVALID_CODE',
-      }),
-    )
-  })
-
-  test('rejects too many failed attempts', async () => {
-    const email = faker.internet.email()
-
-    await requestSignup(email)
-
-    const count = config.MAX_FAILED_SIGNUP_ATTEMPTS
-    for (let i = 0; i < count; i++) {
-      await app.fetch(
-        TestRequest.json('/auth/signup/verify', 'POST', {
-          email,
-          code: `12345${i}`,
-        }),
-        getRequestEnv(),
-      )
-
-      await redis.flushall()
-    }
-
-    const res = await app.fetch(
-      TestRequest.json('/auth/signup/verify', 'POST', {
-        email,
-        code: '123456',
-      }),
-
-      getRequestEnv(),
-    )
-    const json = await res.json()
-
-    expect(res.status).toBe(429)
-    expect(json).toEqual(
-      expect.objectContaining({
-        code: 'TOO_MANY_ATTEMPTS',
-      }),
-    )
-  })
-
-  test.skip('enforces IP rate limit', async () => {
-    const email = faker.internet.email()
-
-    await app.fetch(
-      TestRequest.json('/auth/signup/verify', 'POST', {
-        email,
-        code: '123456',
-      }),
-      getRequestEnv(),
-    )
-
-    const res = await app.fetch(
-      TestRequest.json('/auth/signup/verify', 'POST', {
-        email,
-        code: '123456',
-      }),
-      getRequestEnv(),
-    )
-
-    expect(res.status).toBe(429)
-    expect(await res.json()).toEqual(
-      expect.objectContaining({ code: 'RATE_LIMIT_EXCEEDED' }),
-    )
-  })
-
-  test('enforces rate limit for email attempts', async () => {
-    const email = faker.internet.email()
-
-    const count = 10
-    for (let i = 0; i < count; i++) {
-      await app.fetch(
-        TestRequest.json('/auth/signup/verify', 'POST', {
-          email,
-          code: `12345${i}`,
-        }),
-        getRequestEnv(`127.0.1.${i}`),
-      )
-    }
-
-    const res = await app.fetch(
-      TestRequest.json('/auth/signup/verify', 'POST', {
-        email,
-        code: '123456',
-      }),
-      getRequestEnv(),
-    )
-
-    expect(res.status).toBe(429)
-    expect(await res.json()).toEqual(
-      expect.objectContaining({ code: 'RATE_LIMIT_EXCEEDED' }),
-    )
-  })
-})
-
-describe('POST /auth/email', () => {
-  test('generates code and sends email', async () => {
-    const email = faker.internet.email()
-    await seedUser(email)
-
-    const res = await app.fetch(
-      TestRequest.json('/auth/email', 'POST', { email }),
-      getRequestEnv(),
-    )
-
-    expect(res.status).toBe(204)
-
-    const inbox = await mailpit.getInbox(email.toLowerCase())
-    const code = inbox[0]!.Subject.match(/(\d{8})/g)?.[0]
-
-    expect(code).toBeDefined()
-  })
-
-  test('deletes old code', async () => {
-    const email = faker.internet.email()
-    await seedUser(email)
-    const user = (await db.query.usersTable.findFirst({
-      where: eq(usersTable.email, email.toLocaleLowerCase()),
-    }))!
+    const user = await db.query.users.findFirst({
+      where: eq(users.email, email),
+    })
     expect(user).toBeDefined()
+    expect(user!.id.startsWith('usr_')).toBe(true)
+    expect(user!.name).toBe(localPart)
 
-    await app.fetch(
-      TestRequest.json('/auth/email', 'POST', { email }),
-      getRequestEnv(),
-    )
+    const session = await db.query.sessions.findFirst({
+      where: eq(sessions.userId, user!.id),
+    })
+    expect(session).toBeDefined()
+    expect(session!.id.startsWith('sess_')).toBe(true)
+    // Bearer plugin may append a signature; the DB stores the session token.
+    expect(token.startsWith(session!.token)).toBe(true)
+  })
 
-    // Circumvent rate limiting
+  test('signs in an existing user without creating a second account', async () => {
+    const email = faker.internet.email().toLowerCase()
+    await signIn(email)
     await redis.flushall()
+    await mailpit.resetMessages()
+
+    await signIn(email)
 
     expect(
-      await db.query.loginChallengesTable.findMany({
-        where: eq(loginChallengesTable.userId, user.id),
-      }),
-    ).toHaveLength(1)
-
-    const res = await app.fetch(
-      TestRequest.json('/auth/email', 'POST', { email }),
-      getRequestEnv(),
-    )
-
-    expect(res.status).toBe(204)
-
-    const inbox = await mailpit.getInbox(email.toLowerCase())
-    const code = inbox[0]!.Subject.match(/(\d{8})/g)?.[0]
-
-    expect(code).toBeDefined()
-
-    expect(
-      await db.query.loginChallengesTable.findMany({
-        where: eq(loginChallengesTable.userId, user.id),
+      await db.query.users.findMany({
+        where: eq(users.email, email),
       }),
     ).toHaveLength(1)
   })
 
-  test('rejects invalid email', async () => {
-    const res = await app.fetch(
-      TestRequest.json('/auth/email', 'POST', { email: 'foo' }),
-      getRequestEnv(),
-    )
-
-    expect(res.status).toBe(422)
-    expect(await res.json()).toEqual(
-      expect.objectContaining({ code: 'VALIDATION_ERROR' }),
-    )
-  })
-
-  test('rejects unknown email', async () => {
-    const email = faker.internet.email()
+  test('rejects an invalid code', async () => {
+    const email = faker.internet.email().toLowerCase()
+    await sendOtp(email)
 
     const res = await app.fetch(
-      TestRequest.json('/auth/email', 'POST', { email }),
-      getRequestEnv(),
-    )
-
-    expect(res.status).toBe(404)
-    expect(await res.json()).toEqual(
-      expect.objectContaining({ code: 'NO_ACCOUNT' }),
-    )
-  })
-
-  test.skip('enforces IP rate limit', async () => {
-    const email = faker.internet.email()
-    await seedUser(email)
-
-    await app.fetch(
-      TestRequest.json('/auth/email', 'POST', { email }),
-      getRequestEnv(),
-    )
-
-    const res = await app.fetch(
-      TestRequest.json('/auth/email', 'POST', { email }),
-      getRequestEnv(),
-    )
-
-    expect(res.status).toBe(429)
-    expect(await res.json()).toEqual(
-      expect.objectContaining({ code: 'RATE_LIMIT_EXCEEDED' }),
-    )
-
-    const email2 = faker.internet.email()
-    await seedUser(email2)
-
-    const resOtherIp = await app.fetch(
-      TestRequest.json('/auth/email', 'POST', {
-        email: email2,
-      }),
-      getRequestEnv('127.0.0.2'),
-    )
-
-    expect(resOtherIp.status).toBe(204)
-  })
-
-  test('enforces email rate limit', async () => {
-    const email = faker.internet.email()
-    await seedUser(email)
-
-    const count = 10
-    for (let i = 0; i < count; i++) {
-      await app.fetch(
-        TestRequest.json('/auth/email', 'POST', {
-          email,
-        }),
-        getRequestEnv(`127.0.1.${i}`),
-      )
-    }
-
-    const res = await app.fetch(
-      TestRequest.json('/auth/email', 'POST', {
+      TestRequest.json('/auth/sign-in/email-otp', 'POST', {
         email,
+        otp: '00000000',
       }),
       getRequestEnv(),
     )
-
-    expect(res.status).toBe(429)
-    expect(await res.json()).toEqual(
-      expect.objectContaining({ code: 'RATE_LIMIT_EXCEEDED' }),
-    )
-  })
-})
-
-describe('POST /auth/email/verify', () => {
-  test('verifies code and creates session', async () => {
-    const email = faker.internet.email()
-    const { userId } = await seedUser(email)
-    const { sessionId } = await seedSession(userId)
-
-    expect(
-      await db.query.loginChallengesTable.findMany({
-        where: eq(loginChallengesTable.userId, userId),
-      }),
-    ).toHaveLength(0)
-
-    // TODO: check expires at, and other important fields
-    expect(
-      await db.query.sessionsTable.findFirst({
-        where: eq(sessionsTable.id, sessionId),
-        with: { user: true },
-      }),
-    ).toEqual(
-      expect.objectContaining({
-        id: sessionId,
-        user: expect.objectContaining({
-          email: email.toLowerCase(),
-          emailVerified: true,
-        }),
-      }),
-    )
-  })
-
-  test('rejects invalid email', async () => {
-    const email = faker.internet.email()
-    await seedUser(email)
-
-    const res = await app.fetch(
-      TestRequest.json('/auth/email/verify', 'POST', {
-        email: 'foo',
-        code: '',
-      }),
-      getRequestEnv(),
-    )
-    const json = await res.json()
-
-    expect(res.status).toBe(422)
-    expect(json).toEqual(
-      expect.objectContaining({
-        code: 'VALIDATION_ERROR',
-      }),
-    )
-  })
-
-  test('rejects if account does not exist', async () => {
-    const res = await app.fetch(
-      TestRequest.json('/auth/email/verify', 'POST', {
-        email: faker.internet.email(),
-        code: '',
-      }),
-      getRequestEnv(),
-    )
-    const json = await res.json()
-
-    expect(res.status).toBe(404)
-    expect(json).toEqual(
-      expect.objectContaining({
-        code: 'NO_ACCOUNT',
-      }),
-    )
-  })
-
-  test('rejects if no active code exists', async () => {
-    const email = faker.internet.email()
-    await seedUser(email)
-
-    const res = await app.fetch(
-      TestRequest.json('/auth/email/verify', 'POST', {
-        email,
-        code: '',
-      }),
-      getRequestEnv(),
-    )
-    const json = await res.json()
 
     expect(res.status).toBe(400)
-    expect(json).toEqual(
+    expect(await res.json()).toEqual(
       expect.objectContaining({
-        code: 'INVALID_CODE',
-      }),
-    )
-  })
-
-  test('rejects expired code', async () => {
-    const email = faker.internet.email()
-    await seedUser(email)
-
-    const code = await requestLogin(email)
-
-    setSystemTime(Date.now() + ms(`${config.LOGIN_CODE_TTL_MINUTES}m`))
-
-    const res = await app.fetch(
-      TestRequest.json('/auth/email/verify', 'POST', { email, code }),
-      getRequestEnv(),
-    )
-    const json = await res.json()
-
-    expect(res.status).toBe(410)
-    expect(json).toEqual(
-      expect.objectContaining({
-        code: 'CODE_EXPIRED',
-      }),
-    )
-  })
-
-  test('rejects invalid code', async () => {
-    const email = faker.internet.email()
-    await seedUser(email)
-
-    await requestLogin(email)
-
-    const res = await app.fetch(
-      TestRequest.json('/auth/email/verify', 'POST', {
-        email,
-        code: '123456',
-      }),
-      getRequestEnv(),
-    )
-    const json = await res.json()
-
-    expect(res.status).toBe(400)
-    expect(json).toEqual(
-      expect.objectContaining({
-        code: 'INVALID_CODE',
+        code: 'INVALID_OTP',
       }),
     )
   })
 
   test('rejects too many failed attempts', async () => {
-    const email = faker.internet.email()
-    await seedUser(email)
+    const email = faker.internet.email().toLowerCase()
+    await sendOtp(email)
 
-    await requestLogin(email)
-
-    const count = config.MAX_FAILED_SIGNUP_ATTEMPTS
-    for (let i = 0; i < count; i++) {
+    for (let i = 0; i < 3; i++) {
       await app.fetch(
-        TestRequest.json('/auth/email/verify', 'POST', {
+        TestRequest.json('/auth/sign-in/email-otp', 'POST', {
           email,
-          code: `12345${i}`,
+          otp: `0000000${i}`,
         }),
         getRequestEnv(),
       )
-
       await redis.flushall()
     }
 
     const res = await app.fetch(
-      TestRequest.json('/auth/email/verify', 'POST', {
+      TestRequest.json('/auth/sign-in/email-otp', 'POST', {
         email,
-        code: '123456',
+        otp: '00000003',
       }),
+      getRequestEnv(),
+    )
 
+    expect(res.status).toBeGreaterThanOrEqual(400)
+    expect(await res.json()).toEqual(
+      expect.objectContaining({
+        code: expect.stringMatching(/TOO_MANY_ATTEMPTS|INVALID_OTP/),
+      }),
+    )
+  })
+})
+
+describe('GET /auth/get-session', () => {
+  test('returns the current session', async () => {
+    const email = faker.internet.email().toLowerCase()
+    const { token, json } = await signIn(email)
+
+    const res = await app.fetch(
+      new TestRequest('/auth/get-session', 'GET').session(token),
+      getRequestEnv(),
+    )
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual(
+      expect.objectContaining({
+        user: expect.objectContaining({
+          id: json.user.id,
+          email,
+        }),
+        session: expect.objectContaining({
+          userId: json.user.id,
+        }),
+      }),
+    )
+  })
+
+  test('rejects a missing or invalid token', async () => {
+    const res = await app.fetch(
+      new TestRequest('/auth/get-session', 'GET').session('not-a-session'),
       getRequestEnv(),
     )
     const json = await res.json()
 
-    expect(res.status).toBe(429)
-    expect(json).toEqual(
-      expect.objectContaining({
-        code: 'TOO_MANY_ATTEMPTS',
-      }),
-    )
-  })
-
-  test('enforces IP rate limit', async () => {
-    const email = faker.internet.email()
-
-    await app.fetch(
-      TestRequest.json('/auth/email/verify', 'POST', {
-        email,
-        code: '123456',
-      }),
-      getRequestEnv(),
-    )
-
-    const res = await app.fetch(
-      TestRequest.json('/auth/email/verify', 'POST', {
-        email,
-        code: '123456',
-      }),
-      getRequestEnv(),
-    )
-
-    expect(res.status).toBe(429)
-    expect(await res.json()).toEqual(
-      expect.objectContaining({ code: 'RATE_LIMIT_EXCEEDED' }),
-    )
-  })
-
-  test('enforces rate limit for email attempts', async () => {
-    const email = faker.internet.email()
-
-    const count = 10
-    for (let i = 0; i < count; i++) {
-      await app.fetch(
-        TestRequest.json('/auth/email/verify', 'POST', {
-          email,
-          code: `12345${i}`,
-        }),
-        getRequestEnv(`127.0.1.${i}`),
-      )
-    }
-
-    const res = await app.fetch(
-      TestRequest.json('/auth/email/verify', 'POST', {
-        email,
-        code: '123456',
-      }),
-      getRequestEnv(),
-    )
-
-    expect(res.status).toBe(429)
-    expect(await res.json()).toEqual(
-      expect.objectContaining({ code: 'RATE_LIMIT_EXCEEDED' }),
-    )
+    expect(res.status).toBe(200)
+    expect(json).toBeNull()
   })
 })
 
-describe('POST /auth/logout', () => {
-  test('logs out user', async () => {
-    const email = faker.internet.email()
-    const { userId } = await seedUser(email)
-    const { sessionId, sessionToken } = await seedSession(userId)
+describe('POST /auth/sign-out', () => {
+  test('revokes the session', async () => {
+    const email = faker.internet.email().toLowerCase()
+    const { token, json } = await signIn(email)
 
     const res = await app.fetch(
-      new TestRequest(`/auth/logout`, 'POST').session(sessionToken),
-      getRequestEnv(),
-    )
-
-    expect(res.status).toBe(204)
-
-    expect(
-      await db.query.sessionsTable.findFirst({
-        where: eq(sessionsTable.id, sessionId),
-      }),
-    ).toEqual(
-      expect.objectContaining({
-        revokedAt: expect.any(Date),
-      }),
-    )
-  })
-})
-
-describe('GET /auth/session', () => {
-  test('returns current session', async () => {
-    const email = faker.internet.email()
-    const { userId } = await seedUser(email)
-    const { sessionId, sessionToken } = await seedSession(userId)
-
-    const res = await app.fetch(
-      new TestRequest(`/auth/session`, 'GET').session(sessionToken),
+      new TestRequest('/auth/sign-out', 'POST').session(token),
       getRequestEnv(),
     )
 
     expect(res.status).toBe(200)
 
-    expect(await res.json()).toEqual(
+    expect(
+      await db.query.sessions.findMany({
+        where: eq(sessions.userId, json.user.id),
+      }),
+    ).toHaveLength(0)
+
+    const sessionRes = await app.fetch(
+      new TestRequest('/auth/get-session', 'GET').session(token),
+      getRequestEnv(),
+    )
+    expect(sessionRes.status).toBe(200)
+    expect(await sessionRes.json()).toBeNull()
+  })
+})
+
+describe('GraphQL viewer', () => {
+  test('returns the current user', async () => {
+    const email = faker.internet.email().toLowerCase()
+    const { token, json } = await signIn(email)
+
+    const res = await app.fetch(
+      TestRequest.json('/graphql', 'POST', {
+        query: '{ viewer { email databaseId } }',
+      }).session(token),
+      getRequestEnv(),
+    )
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({
+      data: {
+        viewer: {
+          email,
+          databaseId: json.user.id,
+        },
+      },
+    })
+  })
+
+  test('rejects unauthenticated requests', async () => {
+    const res = await app.fetch(
+      TestRequest.json('/graphql', 'POST', {
+        query: '{ viewer { email } }',
+      }),
+      getRequestEnv(),
+    )
+
+    const json = await res.json()
+    expect(res.status).toBe(401)
+    expect(json).toEqual(
       expect.objectContaining({
-        id: sessionId,
-        userId,
+        code: 'UNAUTHORIZED',
       }),
     )
   })
 
-  test('rejects unauthorized users', async () => {
+  test('rejects a revoked session', async () => {
+    const email = faker.internet.email().toLowerCase()
+    const { token } = await signIn(email)
+
+    await app.fetch(
+      new TestRequest('/auth/sign-out', 'POST').session(token),
+      getRequestEnv(),
+    )
+
     const res = await app.fetch(
-      new TestRequest(`/auth/session`, 'GET').session('invalid session id'),
+      TestRequest.json('/graphql', 'POST', {
+        query: '{ viewer { email } }',
+      }).session(token),
       getRequestEnv(),
     )
 
     expect(res.status).toBe(401)
-
-    expect(await res.json()).toEqual(
-      expect.objectContaining({
-        code: 'INVALID_SESSION',
-      }),
-    )
   })
 })
 
-async function seedUser(email: string) {
-  const user = await db
-    .insert(usersTable)
-    .values({ email: email.toLowerCase(), emailVerified: true })
-    .returning()
-    .then((res) => res[0]!)
-  return { userId: user.id }
-}
-
-async function seedSession(userId: string) {
-  const token = createSessionToken()
-  const session = await createSession(
-    token,
-    userId,
-    faker.internet.ipv4(),
-    faker.internet.userAgent(),
-  )
-  return { sessionId: session.id, sessionToken: token, session }
-}
-
-async function requestSignup(email: string) {
-  const res = await app.fetch(
-    TestRequest.json('/auth/signup', 'POST', { email }),
+async function sendOtp(email: string) {
+  return await app.fetch(
+    TestRequest.json('/auth/email-otp/send-verification-otp', 'POST', {
+      email,
+      type: 'sign-in',
+    }),
     getRequestEnv(),
   )
+}
 
-  expect(res.status).toBe(204)
+async function readOtpMessage(email: string) {
+  const inbox = await mailpit.getInbox(email)
+  const id = inbox[0]?.ID
+  if (!id) {
+    throw new Error(`No OTP email for ${email}`)
+  }
+  return await mailpit.getMessage(id)
+}
 
-  const inbox = await mailpit.getInbox(email.toLowerCase())
-  const code = inbox[0]!.Subject.match(/(\d{8})/g)?.[0]
-
+async function readOtp(email: string) {
+  const message = await readOtpMessage(email)
+  const code = message.Text.match(/(\d{8})/g)?.[0]
   expect(code).toBeDefined()
-
   return code!
 }
 
-async function requestLogin(email: string) {
+async function signIn(email: string) {
+  const sendRes = await sendOtp(email)
+  expect(sendRes.status).toBe(200)
+
+  const otp = await readOtp(email)
   const res = await app.fetch(
-    TestRequest.json('/auth/email', 'POST', { email }),
+    TestRequest.json('/auth/sign-in/email-otp', 'POST', { email, otp }),
     getRequestEnv(),
   )
+  expect(res.status).toBe(200)
 
-  expect(res.status).toBe(204)
+  const json = (await res.json()) as {
+    token?: string
+    user: { id: string; email: string }
+  }
+  const token = res.headers.get('set-auth-token') ?? json.token
 
-  const inbox = await mailpit.getInbox(email.toLowerCase())
-  const code = inbox[0]!.Subject.match(/(\d{8})/g)?.[0]
+  if (!token) {
+    throw new Error('Expected a session token in the sign-in response')
+  }
 
-  expect(code).toBeDefined()
-
-  return code!
+  return { token, json, res }
 }

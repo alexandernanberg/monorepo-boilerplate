@@ -1,28 +1,32 @@
-import { eq } from 'drizzle-orm'
-import { db } from '~/db'
-import { usersTable } from '~/db/schema'
+import { AsyncLocalStorage } from 'node:async_hooks'
+import { auth } from '~/lib/auth'
 import { ServerError } from '~/lib/server-error'
-import { getSession, getSessionTokenFromRequest } from '~/services/session'
 
-export type CurrentUser = Awaited<ReturnType<typeof getCurrentUser>>
+export type CurrentUser = NonNullable<
+  Awaited<ReturnType<typeof auth.api.getSession>>
+>['user']
 
-async function getCurrentUser(req: Request) {
-  const session = await getSession(getSessionTokenFromRequest(req))
+const currentUserStore = new AsyncLocalStorage<CurrentUser>()
 
-  const user = await db.query.usersTable.findFirst({
-    where: eq(usersTable.id, session.userId),
-    with: {},
-  })
-
-  // TODO: cache in redis?
-  // TODO: what to do with deleted users?
-  // TODO: filter out deleted roles and permissions?
-
-  if (!user) {
-    throw new ServerError(404, 'USER_NOT_FOUND', 'User not found')
-  }
-
-  return user
+function runWithCurrentUser<T>(user: CurrentUser, fn: () => T): T {
+  return currentUserStore.run(user, fn)
 }
 
-export { getCurrentUser }
+async function getCurrentUser(req: Request) {
+  const fromStore = currentUserStore.getStore()
+  if (fromStore) {
+    return fromStore
+  }
+
+  const result = await auth.api.getSession({
+    headers: req.headers,
+  })
+
+  if (!result?.user) {
+    throw new ServerError(401, 'UNAUTHORIZED', 'Missing authorization')
+  }
+
+  return result.user
+}
+
+export { getCurrentUser, runWithCurrentUser }

@@ -3,15 +3,17 @@ import { GraphQLError } from 'graphql'
 import type { Plugin } from 'graphql-yoga'
 import { createYoga } from 'graphql-yoga'
 import { Hono } from 'hono'
+import { cors } from 'hono/cors'
 import { csrf } from 'hono/csrf'
 import { secureHeaders } from 'hono/secure-headers'
+import { config } from '~/config'
 import { createDataSources } from '~/graphql/data-loaders'
 import { schema } from '~/graphql/schema'
+import { auth } from '~/lib/auth'
 import type { EvlogVariables, Logger } from '~/lib/logger'
 import { useLogger } from '~/lib/logger'
 import { NotFoundError, ServerError } from '~/lib/server-error'
-import { authRouter } from '~/routes/auth'
-import { getCurrentUser } from '~/services/user'
+import { getCurrentUser, runWithCurrentUser } from '~/services/user'
 
 const app = new Hono<EvlogVariables>()
 
@@ -19,8 +21,18 @@ const app = new Hono<EvlogVariables>()
 // request logger via `ctx.get('log')`. One wide event is emitted per request.
 app.use(evlog())
 
-app.use(csrf())
 app.use(secureHeaders())
+app.use(
+  cors({
+    origin: config.trustedOrigins,
+    credentials: true,
+    allowHeaders: ['Content-Type', 'Authorization'],
+    exposeHeaders: ['set-auth-token'],
+  }),
+)
+// Bearer and Better Auth's own origin check cover `/auth`. CSRF is for
+// cookie-authenticated browser calls to GraphQL.
+app.use('/graphql', csrf())
 
 app.onError((error, ctx) => {
   const serverError = ServerError.from(error)
@@ -32,7 +44,7 @@ app.onError((error, ctx) => {
 app.get('/', (ctx) => ctx.text('OK'))
 app.notFound(() => new NotFoundError().toResponse())
 
-app.route('/auth', authRouter)
+app.all('/auth/*', (c) => auth.handler(c.req.raw))
 
 /**
  * Validation failures never reach `maskError`, so without this a client sending
@@ -121,7 +133,13 @@ const yoga = createYoga({
   },
 })
 
-app.use('/graphql', async (ctx) => yoga.handle(ctx.req.raw))
+app.use('/graphql', async (ctx) => {
+  // Resolve the session once in Hono so a missing token is a 401 JSON body
+  // (via `app.onError`) rather than a GraphQL 200 with an errors array.
+  // Yoga's context reads the same user from AsyncLocalStorage.
+  const currentUser = await getCurrentUser(ctx.req.raw)
+  return runWithCurrentUser(currentUser, () => yoga.handle(ctx.req.raw))
+})
 
 /**
  * Record a failed request on its wide event.

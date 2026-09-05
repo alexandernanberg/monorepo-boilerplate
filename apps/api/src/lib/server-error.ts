@@ -1,8 +1,6 @@
 import { GraphQLError } from 'graphql'
 import { HTTPException } from 'hono/http-exception'
-import ms from 'ms'
 import { ZodError } from 'zod'
-import { RateLimitError } from '~/lib/rate-limiter'
 
 class ServerError extends Error {
   statusCode: number
@@ -53,10 +51,6 @@ class ServerError extends Error {
       return new ValidationError(error)
     }
 
-    if (error instanceof RateLimitError) {
-      return new TooManyRequests('RATE_LIMIT_EXCEEDED', error.resetsInMs)
-    }
-
     if (error instanceof HTTPException) {
       switch (error.status) {
         case 403:
@@ -99,28 +93,6 @@ class ConflictError extends ServerError {
 class BadRequestError extends ServerError {
   constructor(message = 'Bad request', details?: string) {
     super(400, 'BAD_REQUEST', message, details)
-  }
-}
-
-class TooManyRequests extends ServerError {
-  resetsInMs: number
-
-  constructor(code = 'TOO_MANY_REQUESTS', resetsInMs: number) {
-    super(
-      429,
-      code,
-      `Too many requests. Try again in ${ms(resetsInMs, { long: true })}.`,
-    )
-    this.resetsInMs = resetsInMs
-  }
-
-  toResponse() {
-    const retryAfter = Math.ceil(this.resetsInMs / 1000)
-
-    return Response.json(this.toJSON(), {
-      status: this.statusCode,
-      headers: { 'Retry-After': retryAfter.toString() },
-    })
   }
 }
 

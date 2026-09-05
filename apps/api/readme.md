@@ -2,9 +2,51 @@
 
 ## Auth
 
-- Rate limits
-- Passwordless email login
-- Renew sessions automatically
+Authentication is [Better Auth](https://better-auth.com), mounted at `/auth`.
+Sessions are rows in Postgres — every `getSession` hits the database. Cookie
+caching is off on purpose. Redis holds OTPs and rate-limit counters only.
+The session token stored on the row is the bearer token (Better Auth does not
+hash it), so treat database access as equivalent to session theft.
+
+The current sign-in method is email OTP (passwordless). Passkeys, SSO and 2FA
+are plugins you add to `src/lib/auth.ts` when an app needs them.
+
+### Email OTP
+
+```
+POST /auth/email-otp/send-verification-otp
+{ "email": "user@example.com", "type": "sign-in" }
+
+POST /auth/sign-in/email-otp
+{ "email": "user@example.com", "otp": "12345678" }
+```
+
+The sign-in response sets `set-auth-token`. Send it as
+`Authorization: Bearer <token>` on later requests (GraphQL included). First
+successful OTP for an email creates the user.
+
+```
+GET  /auth/get-session
+POST /auth/sign-out
+```
+
+`GET /auth/get-session` follows Better Auth: a missing or invalid token is
+`200` with a `null` body. GraphQL requires a session and answers `401`.
+
+### Production
+
+Required environment:
+
+- `BETTER_AUTH_SECRET` (32+ chars)
+- `BETTER_AUTH_URL` (public API origin)
+- `APP_ORIGIN` (web app origin, CORS/CSRF)
+- `DATABASE_URL`
+- `REDIS_HOST`
+- `EMAIL_SENDER`
+- `SMTP_HOST`
+
+Optional: `REDIS_PORT` (6379), `REDIS_USER`, `REDIS_PASSWORD`, `SMTP_PORT`
+(587), `SMTP_TLS` (`true`/`false`), `SMTP_USER`, `SMTP_PASSWORD`.
 
 ## Logging
 
@@ -17,12 +59,8 @@ finishes.
 Add context from a route with `ctx.get('log')`:
 
 ```ts
-authRouter.post('/email', async (ctx) => {
-  const log = ctx.get('log')
-  log.set({ auth: { step: 'email', email } })
-  log.set({ user: { id: user.id } })
-  // ...
-})
+const log = ctx.get('log')
+log.set({ user: { id: user.id } })
 ```
 
 Outside of a Hono handler — inside the GraphQL `context` callback or
@@ -93,8 +131,3 @@ Linting and formatting run on [oxlint and oxfmt](https://oxc.rs) via
 `enforce-delete-with-where` / `enforce-update-with-where` rules have no oxlint
 equivalent, so `.delete()` and `.update()` calls are no longer checked for a
 `.where(...)` clause — always double check those by hand.
-
-## TODO
-
-- [ ] Passkeys
-- [ ] Change email?
