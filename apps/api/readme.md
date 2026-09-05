@@ -2,9 +2,56 @@
 
 ## Auth
 
-- Rate limits
-- Passwordless email login
-- Renew sessions automatically
+Authentication is [Better Auth](https://better-auth.com), mounted at `/auth`.
+Session rows live in Postgres so they can be listed and revoked. Redis holds
+OTPs, rate-limit counters, and a session cache for `getSession`. Cookie
+caching is off because this starter is Bearer-first — turn `session.cookieCache`
+on for a same-origin cookie SPA.
+
+The session token stored on the row is the bearer token (Better Auth does not
+hash it), so treat database access as equivalent to session theft.
+
+The current sign-in method is email OTP (passwordless). First successful OTP
+for an email creates the user. Add Better Auth plugins in `src/lib/auth.ts`
+when a project needs passkeys, magic links, 2FA, or orgs.
+
+### Email OTP
+
+```
+POST /auth/email-otp/send-verification-otp
+{ "email": "user@example.com", "type": "sign-in" }
+
+POST /auth/sign-in/email-otp
+{ "email": "user@example.com", "otp": "12345678" }
+```
+
+The sign-in response sets `set-auth-token`. Send it as
+`Authorization: Bearer <token>` on later requests (GraphQL included). First
+successful OTP for an email creates the user.
+
+```
+GET  /auth/get-session
+POST /auth/sign-out
+```
+
+`GET /auth/get-session` follows Better Auth: a missing or invalid token is
+`200` with a `null` body. GraphQL is the same idea — `viewer` is `null`
+when there is no session. Field resolvers decide what actually needs a user.
+
+### Production
+
+Required environment:
+
+- `BETTER_AUTH_SECRET` (32+ chars)
+- `BETTER_AUTH_URL` (public API origin)
+- `APP_ORIGIN` (web app origin, CORS/CSRF)
+- `DATABASE_URL`
+- `REDIS_HOST`
+- `EMAIL_SENDER`
+- `SMTP_HOST`
+
+Optional: `REDIS_PORT` (6379), `REDIS_USER`, `REDIS_PASSWORD`, `SMTP_PORT`
+(587), `SMTP_TLS` (`true`/`false`), `SMTP_USER`, `SMTP_PASSWORD`.
 
 ## Logging
 
@@ -17,12 +64,8 @@ finishes.
 Add context from a route with `ctx.get('log')`:
 
 ```ts
-authRouter.post('/email', async (ctx) => {
-  const log = ctx.get('log')
-  log.set({ auth: { step: 'email', email } })
-  log.set({ user: { id: user.id } })
-  // ...
-})
+const log = ctx.get('log')
+log.set({ user: { id: user.id } })
 ```
 
 Outside of a Hono handler — inside the GraphQL `context` callback or
@@ -37,6 +80,10 @@ Errors are recorded centrally, so handlers only need to throw:
 - Yoga's `maskError` does the same for GraphQL. Yoga's own logger is turned off
   (`logging: false`) — it dumped errors to the console unstructured and detached
   from the request that caused them.
+- Better Auth is the same: its logger is piped into evlog, and `/auth/*`
+  4xx/5xx are copied onto the request event (BA returns a `Response`, so they
+  never reach `app.onError`). A session is identified with
+  `identifyUser` from `evlog/better-auth`.
 - Parse and validation failures are the client's mistake, not ours. They are
   returned to the client as-is and recorded as warnings. Validation errors never
   reach `maskError`, so a small `onValidate` plugin catches those.
@@ -93,8 +140,3 @@ Linting and formatting run on [oxlint and oxfmt](https://oxc.rs) via
 `enforce-delete-with-where` / `enforce-update-with-where` rules have no oxlint
 equivalent, so `.delete()` and `.update()` calls are no longer checked for a
 `.where(...)` clause — always double check those by hand.
-
-## TODO
-
-- [ ] Passkeys
-- [ ] Change email?

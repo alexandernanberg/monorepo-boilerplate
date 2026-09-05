@@ -1,5 +1,5 @@
 import DataLoader from 'dataloader'
-import { and, inArray, isNull } from 'drizzle-orm'
+import { inArray } from 'drizzle-orm'
 import { db } from '~/db'
 import type { User } from '~/db/schema'
 import { usersTable } from '~/db/schema'
@@ -11,37 +11,29 @@ function log(...data: Array<unknown>) {
   if (DEBUG) console.log(...data)
 }
 
-export function createDataSources(currentUser: CurrentUser) {
+export function createDataSources(currentUser: CurrentUser | null) {
   const userLoader = new DataLoader<string, User>(async (ids) => {
     log('userLoader', ids)
 
-    const users = await db.query.usersTable.findMany({
-      where: and(
-        inArray(usersTable.id, [...ids]),
-        isNull(usersTable.deletedAt),
-      ),
+    const found = await db.query.usersTable.findMany({
+      where: inArray(usersTable.id, [...ids]),
     })
 
     const usersById: Record<string, User> = {}
-    for (const user of users) {
+    for (const user of found) {
       usersById[user.id] = user
     }
 
     return ids.map((id) => usersById[id] ?? new Error(`User not found "${id}"`))
   })
 
-  // Prime loader with current user data
-  userLoader.prime(currentUser.id, currentUser)
+  if (currentUser) {
+    userLoader.prime(currentUser.id, currentUser as User)
+  }
 
   return {
     async loadUserById(id: string) {
-      // TODO:
-      // const accessibleUsersIds = await getAccessibleUsersIds()
-      // if (!accessibleUsersIds.has(id)) {
-      //   throw new ForbiddenError('Forbidden')
-      // }
-
-      if (currentUser.id !== id) {
+      if (!currentUser || currentUser.id !== id) {
         throw new ForbiddenError('Forbidden')
       }
 

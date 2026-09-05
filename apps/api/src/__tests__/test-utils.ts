@@ -19,6 +19,7 @@ class TestRequest extends Request {
     return new TestRequest(url, method, {
       headers: {
         'content-type': 'application/json',
+        origin: 'http://localhost',
       },
       body: JSON.stringify(body),
     })
@@ -99,6 +100,16 @@ const mailpit = {
       msg.To.some((to) => to.Address === email),
     )
     return inbox
+  },
+
+  async getMessage(id: string) {
+    const res = await fetch(`${this.API_URL}/message/${id}`)
+    return (await res.json()) as {
+      Subject: string
+      Text: string
+      HTML: string
+      Snippet: string
+    }
   },
 }
 

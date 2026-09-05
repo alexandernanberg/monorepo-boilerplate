@@ -8,7 +8,7 @@ import type { CurrentUser } from '~/services/user'
 export const builder = new SchemaBuilder<{
   Context: {
     dataSources: ReturnType<typeof createDataSources>
-    currentUser: CurrentUser
+    currentUser: CurrentUser | null
   }
   Scalars: {
     DateTime: { Input: Date; Output: Date }

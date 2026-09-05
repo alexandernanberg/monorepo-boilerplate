@@ -1,17 +1,24 @@
+import { identifyUser } from 'evlog/better-auth'
 import { evlog } from 'evlog/hono'
 import { GraphQLError } from 'graphql'
 import type { Plugin } from 'graphql-yoga'
 import { createYoga } from 'graphql-yoga'
 import { Hono } from 'hono'
+import { cors } from 'hono/cors'
 import { csrf } from 'hono/csrf'
 import { secureHeaders } from 'hono/secure-headers'
+import { config, env } from '~/config'
 import { createDataSources } from '~/graphql/data-loaders'
 import { schema } from '~/graphql/schema'
+import { auth } from '~/lib/auth'
 import type { EvlogVariables, Logger } from '~/lib/logger'
 import { useLogger } from '~/lib/logger'
 import { NotFoundError, ServerError } from '~/lib/server-error'
-import { authRouter } from '~/routes/auth'
-import { getCurrentUser } from '~/services/user'
+import {
+  getCurrentUser,
+  resolveSession,
+  runWithCurrentUser,
+} from '~/services/user'
 
 const app = new Hono<EvlogVariables>()
 
@@ -19,8 +26,18 @@ const app = new Hono<EvlogVariables>()
 // request logger via `ctx.get('log')`. One wide event is emitted per request.
 app.use(evlog())
 
-app.use(csrf())
 app.use(secureHeaders())
+app.use(
+  cors({
+    origin: config.trustedOrigins,
+    credentials: true,
+    allowHeaders: ['Content-Type', 'Authorization'],
+    exposeHeaders: ['set-auth-token'],
+  }),
+)
+// Bearer and Better Auth's own origin check cover `/auth`. CSRF is for
+// cookie-authenticated browser calls to GraphQL.
+app.use('/graphql', csrf())
 
 app.onError((error, ctx) => {
   const serverError = ServerError.from(error)
@@ -32,7 +49,11 @@ app.onError((error, ctx) => {
 app.get('/', (ctx) => ctx.text('OK'))
 app.notFound(() => new NotFoundError().toResponse())
 
-app.route('/auth', authRouter)
+app.all('/auth/*', async (c) => {
+  const res = await auth.handler(c.req.raw)
+  await logAuthResponse(c.get('log'), res)
+  return res
+})
 
 /**
  * Validation failures never reach `maskError`, so without this a client sending
@@ -64,7 +85,7 @@ const logValidationErrors: Plugin = {
 
 const yoga = createYoga({
   schema,
-  landingPage: false,
+  landingPage: env === 'development',
   // Yoga's own logger dumps errors straight to the console, unstructured and
   // detached from the request that caused them. `maskError` below puts them on
   // the request's wide event instead.
@@ -101,7 +122,7 @@ const yoga = createYoga({
       return serverError.toGraphQLError()
     },
   },
-  context: async ({ request, params }) => {
+  context: ({ params }) => {
     // Every GraphQL request shares the `/graphql` path, so the operation name
     // is what makes the wide events tellable apart. Only sent by clients that
     // name their operations.
@@ -109,19 +130,60 @@ const yoga = createYoga({
       useLogger().set({ graphql: { operationName: params.operationName } })
     }
 
-    const currentUser = await getCurrentUser(request)
-    const dataSources = createDataSources(currentUser)
-
-    useLogger().set({ user: { id: currentUser.id } })
+    const currentUser = getCurrentUser()
 
     return {
-      dataSources,
+      dataSources: createDataSources(currentUser),
       currentUser,
     }
   },
 })
 
-app.use('/graphql', async (ctx) => yoga.handle(ctx.req.raw))
+app.use('/graphql', async (ctx) => {
+  // Session is optional at the GraphQL layer: `viewer` is null when there
+  // isn't one, and field resolvers decide what needs a user. Resolved once
+  // here so Yoga's context reads it from AsyncLocalStorage.
+  const session = await resolveSession(ctx.req.raw)
+  if (session) {
+    identifyUser(ctx.get('log'), session)
+  }
+
+  return runWithCurrentUser(session?.user ?? null, () =>
+    yoga.handle(ctx.req.raw),
+  )
+})
+
+/**
+ * Better Auth answers 4xx/5xx itself, so they never reach `app.onError`.
+ * Clone the body onto the wide event the same way thrown `ServerError`s are.
+ */
+async function logAuthResponse(log: Logger, res: Response) {
+  if (res.status < 400) {
+    return
+  }
+
+  const body: unknown = await res
+    .clone()
+    .json()
+    .catch(() => null)
+  const record = body !== null && typeof body === 'object' ? body : null
+  const code =
+    record && 'code' in record && typeof record.code === 'string'
+      ? record.code
+      : 'AUTH_ERROR'
+  const message =
+    record && 'message' in record && typeof record.message === 'string'
+      ? record.message
+      : res.statusText || 'Authentication error'
+
+  if (res.status < 500) {
+    log.setLevel('warn')
+    log.set({ error: { code, message } })
+    return
+  }
+
+  log.error(new Error(message), { error: { code } })
+}
 
 /**
  * Record a failed request on its wide event.
