@@ -4,11 +4,24 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": [".cache/tsbuildinfo.json", "dist/**"]
+      "outputs": ["dist/**"]
     },
     "dev": {
       "cache": false,
-      "persistent": true
+      "persistent": true,
+      // Strict env mode (the default) hides everything not listed here from the
+      // task, so without this `PORT=5000 pnpm dev` is silently ignored. Bun
+      // reads `apps/api/.env` itself; this is for what the shell exports.
+      "passThroughEnv": [
+        "NODE_ENV",
+        "PORT",
+        "DATABASE_URL",
+        "REDIS_*",
+        "SMTP_*",
+        "EMAIL_SENDER",
+        "BETTER_AUTH_*",
+        "APP_ORIGIN"
+      ]
     },
     "lint": {
       "dependsOn": ["^build"]

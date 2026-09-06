@@ -87,6 +87,14 @@ const logValidationErrors: Plugin = {
 const yoga = createYoga({
   schema,
   landingPage: env === 'development',
+  // The IDE is a development tool. Introspection stays on; turn it off with
+  // `@graphql-yoga/plugin-disable-introspection` if the schema is sensitive.
+  graphiql: env === 'development',
+  // Hono's `cors()` above is the single source of truth. Yoga's default
+  // reflects whatever `Origin` the request carries and adds
+  // `Access-Control-Allow-Credentials: true`, which is only harmless here
+  // because the Hono middleware overwrites it afterwards.
+  cors: false,
   // Errors go through `maskError` onto the request event, not Yoga's logger.
   logging: false,
   plugins: [logValidationErrors],

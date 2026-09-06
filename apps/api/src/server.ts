@@ -1,6 +1,6 @@
 import { log } from 'evlog'
 import { app } from '~/app'
-import { env } from '~/config'
+import { config, env } from '~/config'
 import { client, upgradeDatabase } from '~/db'
 import { emailClient } from '~/lib/email'
 import { redis } from '~/lib/redis'
@@ -12,6 +12,9 @@ if (env !== 'test') {
 
 const server = Bun.serve({
   port: Number(process.env['PORT']) || 4000,
+  // Bun's default is 128 MiB. Every route here parses a JSON body into memory,
+  // and no legitimate GraphQL or auth request comes anywhere near this.
+  maxRequestBodySize: config.MAX_REQUEST_BODY_BYTES,
   fetch: app.fetch,
 })
 

@@ -1,0 +1,14 @@
+# Actions are pinned to commit SHAs in the workflows (a tag can be moved, a
+# SHA cannot). This keeps those pins moving with upstream releases.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    # `/` only covers .github/workflows; the composite action needs its own entry.
+    directories:
+      - /
+      - /.github/actions/setup
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ['*']
