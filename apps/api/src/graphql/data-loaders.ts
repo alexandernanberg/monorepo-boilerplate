@@ -7,7 +7,9 @@ import { ForbiddenError, NotFoundError } from '~/lib/server-error'
 import type { CurrentUser } from '~/services/user'
 
 export function createDataSources(currentUser: CurrentUser | null) {
-  const userLoader = new DataLoader<string, User>(async (ids) => {
+  // A missing row is `null`, so that a failed query still rejects the batch
+  // and surfaces as a 500 rather than being mistaken for a 404 below.
+  const userLoader = new DataLoader<string, User | null>(async (ids) => {
     const found = await db.query.usersTable.findMany({
       where: inArray(usersTable.id, [...ids]),
     })
@@ -17,7 +19,7 @@ export function createDataSources(currentUser: CurrentUser | null) {
       usersById[user.id] = user
     }
 
-    return ids.map((id) => usersById[id] ?? new Error(`User not found "${id}"`))
+    return ids.map((id) => usersById[id] ?? null)
   })
 
   if (currentUser) {
@@ -30,7 +32,7 @@ export function createDataSources(currentUser: CurrentUser | null) {
         throw new ForbiddenError('Forbidden')
       }
 
-      const user = await userLoader.load(id).catch(() => null)
+      const user = await userLoader.load(id)
 
       if (!user) {
         throw new NotFoundError('User not found')

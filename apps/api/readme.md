@@ -51,9 +51,29 @@ Required environment:
 - `SMTP_HOST`
 
 Optional: `REDIS_PORT` (6379), `REDIS_USER`, `REDIS_PASSWORD`, `SMTP_PORT`
-(587), `SMTP_TLS` (`true`/`false` — STARTTLS on 587; port 465 is implicit TLS),
-`SMTP_USER`, `SMTP_PASSWORD`. Prefer `REDIS_URL` (`rediss://` for TLS) over
-host/port when the broker requires TLS.
+(587), `SMTP_TLS` (defaults to `true` in production — STARTTLS on 587; port 465
+is implicit TLS; set `false` only for a relay that is plaintext on purpose),
+`SMTP_USER`, `SMTP_PASSWORD` (SMTP auth is only attempted when `SMTP_USER` is
+set). Prefer `REDIS_URL` (`rediss://` for TLS) over host/port when the broker
+requires TLS. A missing or malformed variable fails the boot with an error that
+names it.
+
+Rate limiting and session `ipAddress` read the client IP from
+`x-forwarded-for` / `x-real-ip`. That is only meaningful behind a proxy or load
+balancer that sets those headers itself; exposed directly, a client can pick
+its own bucket by sending the header.
+
+Requests are capped at 1 MiB (`MAX_REQUEST_BODY_BYTES`); every route parses a
+JSON body into memory and nothing legitimate comes close.
+
+## Database
+
+Drizzle migrations in `migrations/` are applied on boot (`upgradeDatabase` in
+`src/server.ts`) and by `pnpm db:migrate`. The run is serialized with a
+Postgres advisory lock, so replicas that start at the same time queue up
+instead of racing each other into "relation already exists" and crash-looping
+until one wins. Generate a migration after a schema change with
+`pnpm --filter api db:generate`.
 
 ## Logging
 

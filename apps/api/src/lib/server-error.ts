@@ -1,6 +1,6 @@
 import { GraphQLError } from 'graphql'
 import { HTTPException } from 'hono/http-exception'
-import { ZodError } from 'zod'
+import { z, ZodError } from 'zod'
 
 class ServerError extends Error {
   statusCode: number
@@ -119,7 +119,7 @@ class ValidationError extends ServerError {
   constructor(error: ZodError) {
     super(422, 'VALIDATION_ERROR', 'Validation error')
 
-    this.errors = error.flatten((issue) => ({
+    this.errors = z.flattenError(error, (issue) => ({
       code: issue.code,
       message: issue.message,
     })).fieldErrors
