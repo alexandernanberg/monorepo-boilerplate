@@ -25,7 +25,7 @@ pnpm dev
 | GraphQL | http://localhost:4000/graphql |
 | Mailpit | http://localhost:8025         |
 
-Copy `.env.example` to `.env` to override local defaults. Production environment variables are listed in `apps/api/readme.md`.
+Copy `apps/api/.env.example` to `apps/api/.env` to override local defaults (Bun reads `.env` from the app directory, not the repo root). Production environment variables are listed in `apps/api/readme.md`.
 
 ## Scripts
 

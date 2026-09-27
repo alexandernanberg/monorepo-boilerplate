@@ -26,7 +26,8 @@ await upgradeDatabase()
 afterAll(async () => {
   await redis.quit()
   await client.end()
-  await $`docker compose -p test down`.quiet()
+  // `-v` drops the anonymous volumes the redis image declares.
+  await $`docker compose -p test down -v`.quiet()
 })
 
 async function waitFor(label: string, cb: () => Promise<unknown>) {

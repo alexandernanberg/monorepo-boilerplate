@@ -8,14 +8,19 @@
     },
     "dev": {
       "cache": false,
-      "persistent": true
+      "persistent": true,
+      // Strict env mode would drop anything exported in the shell (e.g.
+      // `DATABASE_URL=… pnpm dev`). Uncached, so nothing to invalidate.
+      "passThroughEnv": ["*"]
     },
     "lint": {
       "dependsOn": ["^build"]
     },
     "test": {
       "dependsOn": ["^build"],
-      "cache": false
+      "cache": false,
+      // e.g. DOCKER_HOST for the compose stack the tests start.
+      "passThroughEnv": ["*"]
     },
     "typecheck": {
       "dependsOn": ["^build"]

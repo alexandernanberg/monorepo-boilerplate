@@ -50,6 +50,25 @@ describe('POST /auth/email-otp/send-verification-otp', () => {
 
     expect(res.status).toBe(400)
   })
+
+  test('rate limits by socket address, not a client-sent x-forwarded-for', async () => {
+    const requestEnv = getRequestEnv()
+    const send = () =>
+      app.fetch(
+        // `TestRequest.json` sends a fresh random `x-forwarded-for` each time.
+        TestRequest.json('/auth/email-otp/send-verification-otp', 'POST', {
+          email: faker.internet.email().toLowerCase(),
+          type: 'sign-in',
+        }),
+        requestEnv,
+      )
+
+    for (let i = 0; i < 5; i++) {
+      expect((await send()).status).toBe(200)
+    }
+
+    expect((await send()).status).toBe(429)
+  })
 })
 
 describe('POST /auth/sign-in/email-otp', () => {
@@ -283,6 +302,19 @@ describe('GraphQL viewer', () => {
     expect(await res.json()).toEqual({
       data: { viewer: null },
     })
+  })
+})
+
+describe('GET /graphql', () => {
+  test('does not serve GraphiQL outside development', async () => {
+    const res = await app.fetch(
+      new TestRequest('/graphql', 'GET', {
+        headers: { accept: 'text/html' },
+      }),
+      getRequestEnv(),
+    )
+
+    expect(res.headers.get('content-type') ?? '').not.toContain('text/html')
   })
 })
 

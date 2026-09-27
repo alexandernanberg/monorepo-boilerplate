@@ -9,6 +9,13 @@ function requiredEnv(name: string) {
   return z.string().min(1).parse(process.env[name])
 }
 
+function listEnv(name: string) {
+  return (process.env[name] ?? '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean)
+}
+
 class Config {
   DATABASE_URL =
     process.env['DATABASE_URL'] ??
@@ -34,6 +41,10 @@ class Config {
   AUTH_BASE_URL = process.env['BETTER_AUTH_URL'] ?? 'http://localhost:4000'
   APP_ORIGIN = process.env['APP_ORIGIN'] ?? 'http://localhost:3000'
 
+  // IPs / CIDRs of the proxies in front of the server (load balancer, CDN).
+  // Only their `x-forwarded-for` entries are believed; see `withClientIp`.
+  TRUSTED_PROXIES = listEnv('TRUSTED_PROXIES')
+
   SESSION_TTL_DAYS = 30
   OTP_TTL_MINUTES = 15
   OTP_LENGTH = 8
@@ -54,7 +65,9 @@ class ProductionConfig extends Config {
   EMAIL_SENDER = z.email().parse(process.env['EMAIL_SENDER'])
 
   SMTP_HOST = requiredEnv('SMTP_HOST')
-  SMTP_TLS = process.env['SMTP_TLS'] === 'true'
+  // Opt out, not in: without STARTTLS required, a downgrade sends the OTP and
+  // the SMTP credentials in the clear.
+  SMTP_TLS = process.env['SMTP_TLS'] !== 'false'
   SMTP_PORT = z.coerce.number().parse(process.env['SMTP_PORT'] ?? '587')
   SMTP_USER = process.env['SMTP_USER'] ?? ''
   SMTP_PASSWORD = process.env['SMTP_PASSWORD'] ?? ''
