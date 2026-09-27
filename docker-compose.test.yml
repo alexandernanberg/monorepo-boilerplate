@@ -6,15 +6,18 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
     ports:
-      - 5433:5432
+      - 127.0.0.1:5433:5432
+    # Throwaway data: faster than disk, and no anonymous volume left behind.
+    tmpfs:
+      - /var/lib/postgresql/data
 
   redis_test:
     image: redis:7-alpine
     ports:
-      - 6380:6379
+      - 127.0.0.1:6380:6379
 
   mailpit_test:
     image: axllent/mailpit
     ports:
-      - 1026:1025
-      - 8026:8025
+      - 127.0.0.1:1026:1025
+      - 127.0.0.1:8026:8025
