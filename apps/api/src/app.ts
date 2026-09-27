@@ -3,7 +3,9 @@ import { evlog } from 'evlog/hono'
 import { GraphQLError } from 'graphql'
 import type { Plugin } from 'graphql-yoga'
 import { createYoga } from 'graphql-yoga'
+import type { Context } from 'hono'
 import { Hono } from 'hono'
+import { getConnInfo } from 'hono/bun'
 import { cors } from 'hono/cors'
 import { secureHeaders } from 'hono/secure-headers'
 import { config, env } from '~/config'
@@ -51,7 +53,7 @@ app.get('/health', async (ctx) => {
 app.notFound(() => new NotFoundError().toResponse())
 
 app.all('/auth/*', async (c) => {
-  const res = await auth.handler(c.req.raw)
+  const res = await auth.handler(withClientIp(c))
   await logAuthResponse(c.get('log'), res)
   return res
 })
@@ -86,6 +88,8 @@ const logValidationErrors: Plugin = {
 
 const yoga = createYoga({
   schema,
+  // Yoga serves GraphiQL by default, production included.
+  graphiql: env === 'development',
   landingPage: env === 'development',
   // Errors go through `maskError` onto the request event, not Yoga's logger.
   logging: false,
@@ -151,6 +155,41 @@ app.use('/graphql', async (ctx) => {
     yoga.handle(ctx.req.raw),
   )
 })
+
+/**
+ * Better Auth keys rate limits (and `sessions.ip_address`) on
+ * `x-forwarded-for`. Read as sent, that header is whatever the client wants it
+ * to be — rotate it and the OTP limits never trip. And with nothing in front
+ * of the server it is missing, so every client lands in one shared bucket.
+ *
+ * Pin it to the socket peer instead. Behind a proxy (`TRUSTED_PROXIES`), append
+ * the peer to the chain so Better Auth walks it back past the trusted hops to
+ * the first address a proxy vouched for.
+ */
+function withClientIp(ctx: Context): Request {
+  const req = ctx.req.raw
+
+  let peer: string | undefined
+  try {
+    peer = getConnInfo(ctx).remote.address
+  } catch {
+    // Not served by `Bun.serve` (e.g. `app.fetch` without a server).
+  }
+  if (!peer) {
+    return req
+  }
+
+  const headers = new Headers(req.headers)
+  const forwarded = headers.get('x-forwarded-for')
+  headers.set(
+    'x-forwarded-for',
+    config.TRUSTED_PROXIES.length > 0 && forwarded
+      ? `${forwarded}, ${peer}`
+      : peer,
+  )
+
+  return new Request(req, { headers })
+}
 
 /**
  * Better Auth answers 4xx/5xx itself, so they never reach `app.onError`.

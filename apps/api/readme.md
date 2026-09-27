@@ -51,9 +51,33 @@ Required environment:
 - `SMTP_HOST`
 
 Optional: `REDIS_PORT` (6379), `REDIS_USER`, `REDIS_PASSWORD`, `SMTP_PORT`
-(587), `SMTP_TLS` (`true`/`false` — STARTTLS on 587; port 465 is implicit TLS),
-`SMTP_USER`, `SMTP_PASSWORD`. Prefer `REDIS_URL` (`rediss://` for TLS) over
-host/port when the broker requires TLS.
+(587), `SMTP_TLS` (default `true` — STARTTLS required on 587, set `false` to
+allow plaintext; port 465 is implicit TLS), `SMTP_USER`, `SMTP_PASSWORD`,
+`TRUSTED_PROXIES`. Prefer `REDIS_URL` (`rediss://` for TLS) over host/port
+when the broker requires TLS.
+
+### Client IP
+
+Rate limits and `sessions.ip_address` are keyed on the client IP. `/auth/*`
+rewrites `x-forwarded-for` from the socket peer before Better Auth reads it,
+so a client cannot pick its own address and dodge the OTP limits.
+
+Behind a load balancer or CDN, the peer is the proxy. Set `TRUSTED_PROXIES`
+to its IPs/CIDRs (comma-separated, every hop in the chain) and the peer is
+appended to the forwarded chain instead, which Better Auth walks back to the
+first untrusted address. Leave it unset and every request behind a proxy
+shares the proxy's bucket.
+
+## Migrations
+
+`pnpm db:generate` writes a migration from `src/db/schema.ts`. The server
+applies pending ones on boot, under a Postgres advisory lock, so replicas
+starting together take turns instead of racing to apply the same migration.
+
+## GraphQL
+
+`/graphql` serves GraphiQL in development only — Yoga enables it by default,
+production included.
 
 ## Logging
 

@@ -103,8 +103,11 @@ export const auth = betterAuth({
   },
 
   advanced: {
+    // `x-forwarded-for` is rewritten from the socket peer before it gets here
+    // (`withClientIp` in `~/app`), so it is the only header worth reading.
     ipAddress: {
-      ipAddressHeaders: ['x-forwarded-for', 'x-real-ip'],
+      ipAddressHeaders: ['x-forwarded-for'],
+      trustedProxies: config.TRUSTED_PROXIES,
     },
     database: {
       joins: true,
